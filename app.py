@@ -37,8 +37,8 @@ class PDF(FPDF):
         # Wir platzieren es oben rechts (x=150, y=8, Breite=40)
         if os.path.exists("logo.png"):
             self.image("logo.png", 150, 8, 40)
-        elif os.path.exists("logoI.jpg"):
-            self.image("logoI.jpg", 150, 8, 40)
+        elif os.path.exists("logo.jpg"):
+            self.image("logo.jpg", 150, 8, 40)
             
         # 2. BRIEFKOPF (Links)
         self.set_font('Arial', 'B', 15)
@@ -163,3 +163,4 @@ if uploaded_file and api_key:
     except Exception as e:
 
         st.error(f"Ein Fehler ist aufgetreten: {e}")
+
