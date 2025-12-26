@@ -138,4 +138,69 @@ def erstelle_pdf(daten):
     # --- TERMIN ---
     pdf.set_font("Arial", 'B', 11)
     pdf.cell(35, 8, txt("Terminwunsch:"), 0, 0)
-    pdf.set_
+    pdf.set_font("Arial", '', 11)
+    pdf.cell(0, 8, txt(daten.get('termin_wunsch', '-')), 0, 1)
+
+    # --- UNTERSCHRIFTEN-BEREICH ---
+    pdf.ln(30)
+    # Linien zeichnen
+    y = pdf.get_y()
+    pdf.line(10, y, 90, y)   # Linie links
+    pdf.line(110, y, 190, y) # Linie rechts
+    
+    pdf.set_font("Arial", '', 8)
+    pdf.cell(90, 5, "Datum, Unterschrift Monteur", 0, 0, 'C')
+    pdf.cell(10, 5, "", 0, 0) # Abstand
+    pdf.cell(90, 5, "Datum, Unterschrift Kunde", 0, 1, 'C')
+
+    # Speichern
+    dateiname = "auftrag.pdf"
+    pdf.output(dateiname)
+    return dateiname
+
+# --- 4. DIE WEBSEITE (Frontend) ---
+st.set_page_config(page_title="MeisterBot", page_icon="🛠️")
+
+st.title("🛠️ MeisterBot")
+st.write("Lade eine WhatsApp-Sprachnachricht hoch, um automatisch einen Auftrag zu erstellen.")
+
+# Hier erlauben wir alle typischen Audio-Formate
+uploaded_file = st.file_uploader("Sprachnachricht wählen", type=["mp3", "wav", "m4a", "ogg", "opus"])
+
+if uploaded_file and api_key:
+    st.info("⏳ Datei wird verarbeitet... einen Moment.")
+    
+    # Dateiendung ermitteln (wichtig, damit wir sie sauber speichern)
+    dateiname = uploaded_file.name
+    endung = dateiname.split('.')[-1]
+    temp_filename = f"temp_audio.{endung}"
+    
+    # 1. Datei speichern
+    with open(temp_filename, "wb") as f:
+        f.write(uploaded_file.getbuffer())
+        
+    try:
+        # 2. Hören (Whisper)
+        transkript = audio_zu_text(temp_filename)
+        st.success("Sprache erkannt!")
+        with st.expander("Ganzen Text anzeigen"):
+            st.write(transkript)
+            
+        # 3. Verstehen (GPT-4)
+        daten = text_zu_daten(transkript)
+        st.subheader("Extrahierte Auftragsdaten:")
+        st.json(daten)
+        
+        # 4. Drucken (PDF)
+        pdf_datei = erstelle_pdf(daten)
+        
+        with open(pdf_datei, "rb") as pdf_file:
+            st.download_button(
+                label="📄 PDF Auftrag herunterladen",
+                data=pdf_file,
+                file_name=f"Auftrag_{daten.get('kunde_name', 'Neu')}.pdf",
+                mime="application/pdf"
+            )
+            
+    except Exception as e:
+        st.error(f"Hoppla, ein Fehler ist aufgetreten: {e}")
