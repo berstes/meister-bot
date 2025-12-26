@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import json
 import pandas as pd
+import gspread
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -14,50 +15,70 @@ from fpdf import FPDF
 # --- 1. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot", page_icon="🛠️")
 
-# Seitenleiste für Einstellungen
+# Seitenleiste
 with st.sidebar:
     st.header("⚙️ Einstellungen")
     api_key = st.text_input("OpenAI API Key", type="password")
     
     st.markdown("---")
-    st.subheader("📧 E-Mail Versand (SMTP)")
-    st.info("Hier kommen die Daten deines Webhosters rein (z.B. Strato, Ionos).")
-    smtp_server = st.text_input("SMTP Server", value="smtp.ionos.de") # Beispiel-Wert
-    smtp_port = st.number_input("SMTP Port (meist 465 oder 587)", value=465)
-    email_sender = st.text_input("Deine E-Mail Adresse")
-    email_password = st.text_input("Dein E-Mail Passwort", type="password")
+    st.subheader("☁️ Google Sheets")
+    # Name deiner Tabelle bei Google Drive
+    blatt_name = st.text_input("Name der Tabelle", value="Auftragsbuch")
     
-    email_receiver = st.text_input("Empfänger (Dein Büro)", value=email_sender)
+    st.markdown("---")
+    st.subheader("📧 E-Mail Versand")
+    smtp_server = st.text_input("SMTP Server", value="smtp.ionos.de")
+    smtp_port = st.number_input("SMTP Port", value=465)
+    email_sender = st.text_input("Deine E-Mail")
+    email_password = st.text_input("E-Mail Passwort", type="password")
+    email_receiver = st.text_input("Empfänger (Büro)", value=email_sender)
 
 client = None
 if api_key:
     client = OpenAI(api_key=api_key)
 
-# --- 2. EMAIL FUNKTION ---
+# --- 2. GOOGLE SHEETS FUNKTION ---
+def speichere_in_google_sheets(daten):
+    try:
+        # Zugriff auf den Tresor (Secrets)
+        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        
+        # Tabelle öffnen
+        sh = gc.open(blatt_name)
+        worksheet = sh.get_worksheet(0) # Das erste Tabellenblatt nehmen
+        
+        # Wenn leer, Überschriften schreiben
+        if not worksheet.get_all_values():
+            worksheet.append_row(["Datum", "Kunde", "Adresse", "Problem", "Dringlichkeit", "Terminwunsch"])
+            
+        # Daten vorbereiten
+        neue_zeile = [
+            datetime.now().strftime("%d.%m.%Y %H:%M"),
+            daten.get('kunde_name'),
+            daten.get('adresse'),
+            daten.get('problem_titel'),
+            daten.get('dringlichkeit'),
+            daten.get('termin_wunsch')
+        ]
+        
+        # Senden
+        worksheet.append_row(neue_zeile)
+        return True
+    except Exception as e:
+        st.error(f"Google Sheets Fehler: {e}")
+        return False
+
+# --- 3. E-MAIL FUNKTION ---
 def sende_email_mit_pdf(pdf_pfad, daten):
     try:
         msg = MIMEMultipart()
         msg['From'] = email_sender
         msg['To'] = email_receiver
-        msg['Subject'] = f"Neuer Auftrag: {daten.get('kunde_name', 'Kunde')}"
+        msg['Subject'] = f"Auftrag: {daten.get('kunde_name')}"
 
-        body = f"""
-        Moin,
-        
-        ein neuer Auftrag wurde automatisch erfasst.
-        
-        Kunde: {daten.get('kunde_name')}
-        Problem: {daten.get('problem_titel')}
-        Dringlichkeit: {daten.get('dringlichkeit')}
-        
-        Das PDF-Dokument liegt im Anhang.
-        
-        Viele Grüße,
-        Dein MeisterBot
-        """
+        body = f"Neuer Auftrag von {daten.get('kunde_name')}.\nProblem: {daten.get('problem_titel')}"
         msg.attach(MIMEText(body, 'plain'))
 
-        # PDF anhängen
         with open(pdf_pfad, "rb") as attachment:
             part = MIMEBase("application", "octet-stream")
             part.set_payload(attachment.read())
@@ -66,8 +87,6 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         part.add_header("Content-Disposition", f"attachment; filename= {os.path.basename(pdf_pfad)}")
         msg.attach(part)
 
-        # Verbindung zum Server herstellen
-        # Hinweis: Bei SSL Port 465 nutzen wir SMTP_SSL, bei 587 oft starttls()
         if smtp_port == 465:
             server = smtplib.SMTP_SSL(smtp_server, smtp_port)
         else:
@@ -80,10 +99,10 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         server.quit()
         return True
     except Exception as e:
-        st.error(f"E-Mail Fehler: {e}")
+        st.error(f"Mail Fehler: {e}")
         return False
 
-# --- 3. KI & DATEN FUNKTIONEN ---
+# --- 4. KI FUNKTIONEN ---
 def audio_zu_text(dateipfad):
     audio_file = open(dateipfad, "rb")
     return client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
@@ -99,23 +118,6 @@ def text_zu_daten(rohtext):
         response_format={"type": "json_object"}
     )
     return json.loads(response.choices[0].message.content)
-
-# --- 4. EXCEL FUNKTION ---
-EXCEL_DATEI = "auftragsbuch.xlsx"
-def speichere_in_excel(daten):
-    neuer_eintrag = {
-        "Datum": datetime.now().strftime("%d.%m.%Y %H:%M"),
-        "Kunde": daten.get('kunde_name'),
-        "Problem": daten.get('problem_titel'),
-        "Dringlichkeit": daten.get('dringlichkeit')
-    }
-    if os.path.exists(EXCEL_DATEI):
-        df = pd.read_excel(EXCEL_DATEI)
-        df = pd.concat([df, pd.DataFrame([neuer_eintrag])], ignore_index=True)
-    else:
-        df = pd.DataFrame([neuer_eintrag])
-    df.to_excel(EXCEL_DATEI, index=False)
-    return df
 
 # --- 5. PDF KLASSE ---
 class PDF(FPDF):
@@ -184,31 +186,20 @@ if uploaded_file and api_key:
     try:
         transkript = audio_zu_text(f.name)
         daten = text_zu_daten(transkript)
-        
         pdf_datei = erstelle_pdf(daten)
-        df = speichere_in_excel(daten)
         
-        st.success("✅ Auftrag erstellt & gespeichert!")
+        # 1. Google Sheets
+        if speichere_in_google_sheets(daten):
+            st.success("✅ In Google Sheets gespeichert!")
         
-        # E-Mail Versand Check
+        # 2. E-Mail
         if email_sender and email_password:
-            with st.spinner("Sende E-Mail..."):
-                erfolg = sende_email_mit_pdf(pdf_datei, daten)
-                if erfolg:
-                    st.toast("📧 E-Mail wurde erfolgreich versendet!", icon="📨")
+            if sende_email_mit_pdf(pdf_datei, daten):
+                st.toast("📧 E-Mail gesendet!", icon="📨")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            with open(pdf_datei, "rb") as pdf_file:
-                st.download_button("📄 PDF herunterladen", pdf_file, "Auftrag.pdf", "application/pdf")
+        # 3. Download
+        with open(pdf_datei, "rb") as pdf_file:
+            st.download_button("📄 PDF herunterladen", pdf_file, "Auftrag.pdf", "application/pdf")
             
     except Exception as e:
         st.error(f"Fehler: {e}")
-
-st.markdown("---")
-st.subheader("📊 Aktuelles Auftragsbuch")
-if os.path.exists(EXCEL_DATEI):
-    df_show = pd.read_excel(EXCEL_DATEI)
-    st.dataframe(df_show)
-    with open(EXCEL_DATEI, "rb") as f:
-        st.download_button("💾 Excel herunterladen", f, "auftragsbuch.xlsx")
