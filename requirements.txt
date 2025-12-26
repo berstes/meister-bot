@@ -3,3 +3,5 @@ openai
 fpdf
 pandas
 openpyxl
+gspread
+
