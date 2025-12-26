@@ -5,7 +5,6 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- KONFIGURATION ---
-# Wir holen den API-Key sicher über das Eingabefeld
 api_key = st.text_input("Gib hier deinen OpenAI API Key ein:", type="password")
 client = None
 
@@ -31,54 +30,56 @@ def text_zu_daten(rohtext):
     )
     return json.loads(response.choices[0].message.content)
 
-# --- NEUE PDF FUNKTION (PROFI-DESIGN) ---
+# --- PDF KLASSE (MIT LOGO) ---
 class PDF(FPDF):
     def header(self):
-        # Briefkopf (Logo/Name links)
+        # 1. LOGO EINFÜGEN (falls vorhanden)
+        # Wir platzieren es oben rechts (x=150, y=8, Breite=40)
+        if os.path.exists("logo.png"):
+            self.image("logo.png", 150, 8, 40)
+        elif os.path.exists("logo.jpg"):
+            self.image("logo.jpg", 150, 8, 40)
+            
+        # 2. BRIEFKOPF (Links)
         self.set_font('Arial', 'B', 15)
         self.cell(80, 10, 'INTERWARK', 0, 1, 'L')
         self.set_font('Arial', '', 10)
         self.cell(80, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
         self.cell(80, 5, 'Hohe Str. 28, 26725 Emden', 0, 1, 'L')
         
-        # Linie unter dem Kopf
-        self.set_draw_color(200, 200, 200) # Grau
+        # Linie
+        self.set_draw_color(200, 200, 200)
         self.line(10, 35, 200, 35)
-        self.ln(20) # Abstand zum Text
+        self.ln(20)
 
     def footer(self):
-        # Fußzeile (Grau & Klein)
-        self.set_y(-30) # 3 cm von unten
+        self.set_y(-30)
         self.set_font('Arial', 'I', 8)
-        self.set_text_color(128) # Grau
+        self.set_text_color(128)
         
-        # Spalte 1: Adresse & Kontakt
+        # Fußzeile Daten
         self.cell(60, 5, 'Interwark', 0, 0, 'L')
         self.cell(60, 5, 'Bankverbindung:', 0, 0, 'L')
-        self.cell(0, 5, 'Steuernummer:', 0, 1, 'L') # Zeilenumbruch
+        self.cell(0, 5, 'Steuernummer:', 0, 1, 'L')
         
-        # Spalte 2: Daten
         self.cell(60, 5, 'Tel: +49 4921 997130', 0, 0, 'L')
         self.cell(60, 5, 'Sparkasse Emden', 0, 0, 'L')
         self.cell(0, 5, '58/143/02484', 0, 1, 'L')
         
-        # Spalte 3: IBAN etc
         self.cell(60, 5, '', 0, 0, 'L')
         self.cell(60, 5, 'IBAN: DE92 2845 0000 0018 0048 61', 0, 0, 'L')
         self.cell(0, 5, 'USt-IdNr.: DE226723406', 0, 1, 'L')
 
 def erstelle_pdf(daten):
-    pdf = PDF() # Hier rufen wir unsere neue Klasse auf
+    pdf = PDF()
     pdf.add_page()
     
-    # Hilfsfunktion für Umlaute
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1')
     
-    # --- EMPFÄNGERFELD ---
-    pdf.set_text_color(0) # Wieder Schwarz
+    # Empfänger
+    pdf.set_text_color(0)
     pdf.set_font("Arial", '', 10)
     pdf.ln(5)
-    # Kleines Absenderfeld über der Adresse (für Fensterbriefumschläge)
     pdf.set_font("Arial", 'U', 8)
     pdf.cell(0, 5, txt("Interwark - Hohe Str. 28 - 26725 Emden"), 0, 1)
     
@@ -88,17 +89,16 @@ def erstelle_pdf(daten):
     pdf.set_font("Arial", '', 12)
     pdf.cell(0, 5, txt(daten.get('adresse', '')), 0, 1)
     
-    # --- DATUM & TITEL ---
+    # Titel
     pdf.ln(20)
     pdf.set_font("Arial", 'B', 16)
     pdf.cell(0, 10, txt(f"Auftrag / Rapport"), 0, 1)
     
-    # --- INHALT ---
+    # Inhalt
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 11)
     pdf.set_fill_color(240, 240, 240)
     pdf.cell(0, 8, txt("Problembeschreibung / Meldung:"), 0, 1, fill=True)
-    
     pdf.set_font("Arial", '', 11)
     pdf.multi_cell(0, 6, txt(daten.get('problem_detail', '')))
     
@@ -108,11 +108,10 @@ def erstelle_pdf(daten):
     pdf.set_font("Arial", '', 11)
     pdf.cell(0, 8, txt(daten.get('dringlichkeit', '-')), 0, 1)
 
-    # --- UNTERSCHRIFTEN ---
+    # Unterschriften
     pdf.ln(30)
     pdf.line(10, pdf.get_y(), 90, pdf.get_y())
     pdf.line(110, pdf.get_y(), 190, pdf.get_y())
-    
     pdf.set_font("Arial", '', 8)
     pdf.cell(90, 5, "Datum, Unterschrift Monteur", 0, 0, 'C')
     pdf.cell(10, 5, "", 0, 0)
@@ -122,38 +121,44 @@ def erstelle_pdf(daten):
     pdf.output(dateiname)
     return dateiname
 
-# --- DIE WEBSEITE (UI) ---
-st.title("🛠️ MeisterBot - Sprachnachricht zu Auftrag")
-st.write("Lade eine WhatsApp-Sprachnachricht hoch, um automatisch einen Auftrag zu erstellen.")
+# --- WEBSEITE ---
+st.title("🛠️ MeisterBot")
+st.write("Lade eine WhatsApp-Sprachnachricht hoch (MP3, M4A, OGG, OPUS).")
 
-uploaded_file = st.file_uploader("Wähle eine MP3 Datei", type=["mp3", "wav", "m4a"])
+# HIER IST DAS UPDATE: Wir erlauben jetzt mehr Dateitypen!
+uploaded_file = st.file_uploader("Datei wählen", type=["mp3", "wav", "m4a", "ogg", "opus"])
 
 if uploaded_file and api_key:
-    st.info("Datei wird verarbeitet... bitte warten.")
+    st.info("⏳ Datei wird verarbeitet...")
     
-    # Datei temporär speichern
-    with open("temp_upload.mp3", "wb") as f:
+    # Endung herausfinden (wichtig für Whisper)
+    endung = uploaded_file.name.split('.')[-1]
+    temp_name = f"temp_upload.{endung}"
+    
+    with open(temp_name, "wb") as f:
         f.write(uploaded_file.getbuffer())
     
-    # 1. Hören
-    transkript = audio_zu_text("temp_upload.mp3")
-    st.subheader("1. Erkannter Text:")
-    st.text(transkript)
-    
-    # 2. Verstehen
-    daten = text_zu_daten(transkript)
-    st.subheader("2. Extrahierte Daten:")
-    st.json(daten)
-    
-    # 3. PDF
-    pdf_datei = erstelle_pdf(daten)
-    
-    with open(pdf_datei, "rb") as pdf_file:
-        st.download_button(
-            label="📄 PDF-Auftrag herunterladen",
-            data=pdf_file,
-            file_name="Auftrag.pdf",
-            mime="application/pdf"
-        )
-    
-    st.success("Fertig! Der Auftrag wurde erstellt.")
+    try:
+        # 1. Hören
+        transkript = audio_zu_text(temp_name)
+        st.success("Erkannt!")
+        st.text_area("Text:", transkript, height=100)
+        
+        # 2. Verstehen
+        daten = text_zu_daten(transkript)
+        st.subheader("Extrahierte Daten:")
+        st.json(daten)
+        
+        # 3. PDF
+        pdf_datei = erstelle_pdf(daten)
+        
+        with open(pdf_datei, "rb") as pdf_file:
+            st.download_button(
+                label="📄 PDF-Auftrag herunterladen",
+                data=pdf_file,
+                file_name="Auftrag.pdf",
+                mime="application/pdf"
+            )
+            
+    except Exception as e:
+        st.error(f"Ein Fehler ist aufgetreten: {e}")
