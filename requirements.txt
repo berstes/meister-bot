@@ -1,3 +1,5 @@
 streamlit
 openai
 fpdf
+pandas
+openpyxl
