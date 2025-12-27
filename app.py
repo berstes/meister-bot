@@ -15,7 +15,6 @@ from fpdf import FPDF
 # --- 1. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot", page_icon="📝")
 
-# Hilfsfunktion: Repariert kaputte Google-Schlüssel automatisch
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -26,7 +25,7 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# Secrets laden (Fehlertolerant)
+# Secrets laden
 api_key_default = st.secrets.get("openai_api_key", "")
 email_sender_default = st.secrets.get("email_sender", "")
 email_password_default = st.secrets.get("email_password", "")
@@ -34,23 +33,19 @@ smtp_server_default = st.secrets.get("smtp_server", "smtp.ionos.de")
 smtp_port_default = st.secrets.get("smtp_port", 465)
 google_json_raw = st.secrets.get("google_json", "")
 
-# --- SEITENLEISTE (Status-Anzeige) ---
+# --- SEITENLEISTE ---
 with st.sidebar:
     st.header("⚙️ System-Status")
-    
-    # KI Status
     if api_key_default: st.success("✅ KI-System bereit")
     else: st.error("❌ KI-Key fehlt")
     api_key = api_key_default or st.text_input("OpenAI Key", type="password")
     
-    # Google Status
     google_creds = clean_json_string(google_json_raw)
     if google_creds: st.success("☁️ Cloud Speicher aktiv")
     else: st.error("❌ Google Key Fehler")
         
     blatt_name = st.text_input("Dateiname", value="Auftragsbuch")
     
-    # E-Mail Status
     if email_sender_default: st.success("📧 E-Mail aktiv")
     else: st.info("E-Mail manuell:"); 
     email_sender = email_sender_default or st.text_input("E-Mail")
@@ -62,25 +57,18 @@ with st.sidebar:
 client = None
 if api_key: client = OpenAI(api_key=api_key)
 
-# --- 2. FUNKTIONEN: Live-Preise ---
+# --- 2. LIVE-PREISE ---
 
 def lade_preise_live():
-    """Lädt die Preise leise im Hintergrund"""
     fallback_text = "PREISLISTE (Fallback): - Anfahrt: 22 EUR - Arbeitszeit: 77 EUR"
-    
     if not google_creds: return fallback_text
-
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
-        
-        # Versuche Blatt 'Preisliste'
         try: ws = sh.worksheet("Preisliste")
-        except: return fallback_text # Blatt nicht da, nicht schlimm
-
+        except: return fallback_text
         alle_daten = ws.get_all_values()
         if len(alle_daten) < 2: return fallback_text
-
         live_text = "AKTUELLE PREISLISTE (Live):\n"
         # Spalte A = Name, Spalte B = Preis (ab Zeile 2)
         for zeile in alle_daten[1:]:
@@ -90,49 +78,35 @@ def lade_preise_live():
                 if artikel and preis:
                     live_text += f"- {artikel}: {preis} EUR\n"
         return live_text
+    except: return fallback_text
 
-    except:
-        return fallback_text
-
-# --- 3. KI & DATEN ---
+# --- 3. KI ---
 
 def audio_zu_text(dateipfad):
     audio_file = open(dateipfad, "rb")
     return client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
 
 def text_zu_daten(rohtext, preisliste_text):
-    # DATEV-Optimierter Prompt
     system_befehl = f"""
     Du bist ein Buchhalter für Handwerker (Interwark).
-    
     {preisliste_text}
-    
     Aufgabe:
     1. Analysiere den Text. Suche passende Artikel aus der Preisliste.
     2. Wenn ein Artikel genannt wird, nutze EXAKT den Preis aus der Liste.
     3. Berechne Netto, 19% MwSt und Brutto.
-    
     Gib JSON zurück:
     {{
       "kunde_name": "Name",
-      "adresse": "Adresse oder Ort",
-      "problem_titel": "Kurzbeschreibung",
-      "positionen": [
-        {{ "text": "Leistung", "menge": 1.0, "einzel_netto": 0.00, "gesamt_netto": 0.00 }}
-      ],
-      "summe_netto": 0.00,
-      "mwst_betrag": 0.00,
-      "summe_brutto": 0.00
+      "adresse": "Adresse",
+      "problem_titel": "Betreff",
+      "positionen": [ {{ "text": "Leistung", "menge": 1.0, "einzel_netto": 0.00, "gesamt_netto": 0.00 }} ],
+      "summe_netto": 0.00, "mwst_betrag": 0.00, "summe_brutto": 0.00
     }}
     """
-    response = client.chat.completions.create(
-        model="gpt-4o", 
-        messages=[{"role": "system", "content": system_befehl}, {"role": "user", "content": rohtext}],
-        response_format={"type": "json_object"}
-    )
+    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_befehl}, {"role": "user", "content": rohtext}], response_format={"type": "json_object"})
     return json.loads(response.choices[0].message.content)
 
-# --- 4. PDF DESIGN ---
+# --- 4. PDF ---
 
 class PDF(FPDF):
     def header(self):
@@ -142,7 +116,6 @@ class PDF(FPDF):
         self.cell(80, 10, 'INTERWARK', 0, 1, 'L')
         self.set_font('Arial', '', 10)
         self.cell(80, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
-        self.cell(80, 5, 'Hohe Str. 28, 26725 Emden', 0, 1, 'L')
         self.set_draw_color(200,200,200); self.line(10, 35, 200, 35); self.ln(20)
     def footer(self):
         self.set_y(-30); self.set_font('Arial', 'I', 8); self.set_text_color(128)
@@ -152,14 +125,12 @@ def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
-    # Kopfdaten
     pdf.set_font("Arial", 'B', 12); pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
     pdf.set_font("Arial", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     pdf.ln(10); pdf.set_font("Arial", 'B', 16); pdf.cell(0, 10, txt("Leistungsnachweis / Arbeitsbericht"), 0, 1)
     pdf.set_font("Arial", '', 10); pdf.cell(0, 5, txt(f"Betreff: {daten.get('problem_titel')} | Datum: {datetime.now().strftime('%d.%m.%Y')}"), 0, 1)
     pdf.ln(10)
     
-    # Tabelle
     pdf.set_fill_color(240, 240, 240); pdf.set_font("Arial", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1); pdf.cell(90, 8, "Leistung", 1, 0, 'L', 1)
     pdf.cell(20, 8, "Menge", 1, 0, 'C', 1); pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1); pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
@@ -171,7 +142,6 @@ def erstelle_bericht_pdf(daten):
         pdf.cell(10, 8, str(i), 1, 0, 'C'); pdf.cell(90, 8, text, 1, 0, 'L'); pdf.cell(20, 8, menge, 1, 0, 'C')
         pdf.cell(30, 8, einzel, 1, 0, 'R'); pdf.cell(30, 8, gesamt, 1, 1, 'R'); i += 1
     
-    # Summen
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -188,7 +158,7 @@ def erstelle_bericht_pdf(daten):
     dateiname = "arbeitsbericht.pdf"
     pdf.output(dateiname); return dateiname
 
-# --- 5. SPEICHERN & SENDEN ---
+# --- 5. SPEICHERN & SENDEN (FIX FÜR IPHONE) ---
 
 def speichere_in_google_sheets(daten):
     try:
@@ -202,13 +172,28 @@ def speichere_in_google_sheets(daten):
 
 def sende_email_mit_pdf(pdf_pfad, daten):
     try:
-        msg = MIMEMultipart(); msg['From'] = email_sender; msg['To'] = email_receiver
-        msg['Subject'] = f"Bericht: {daten.get('kunde_name')}"; msg.attach(MIMEText('Neuer Arbeitsbericht anbei.', 'plain'))
-        with open(pdf_pfad, "rb") as f: p = MIMEBase("application", "octet-stream"); p.set_payload(f.read()); encoders.encode_base64(p); p.add_header("Content-Disposition", f"filename={os.path.basename(pdf_pfad)}"); msg.attach(p)
+        msg = MIMEMultipart()
+        msg['From'] = email_sender
+        msg['To'] = email_receiver
+        msg['Subject'] = f"Bericht: {daten.get('kunde_name')}"
+        msg.attach(MIMEText('Neuer Arbeitsbericht anbei.', 'plain'))
+
+        with open(pdf_pfad, "rb") as f:
+            # HIER IST DER FIX FÜR APPLE MAIL: "application/pdf"
+            p = MIMEBase("application", "pdf") 
+            p.set_payload(f.read())
+            encoders.encode_base64(p)
+            # Dateiname in Anführungszeichen setzen!
+            filename = os.path.basename(pdf_pfad)
+            p.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+            msg.attach(p)
+
         if int(smtp_port) == 465: s = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
         else: s = smtplib.SMTP(smtp_server, int(smtp_port)); s.starttls()
         s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
-    except: return False
+    except Exception as e:
+        print(f"Mail Fehler: {e}")
+        return False
 
 # --- APP START ---
 st.title("📝 MeisterBot")
@@ -217,7 +202,6 @@ st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
 
 if uploaded_file and api_key:
-    # Wir laden Preise still und heimlich
     preise_text = lade_preise_live()
 
     with st.spinner("⏳ Analysiere Audio & Berechne..."):
@@ -227,7 +211,6 @@ if uploaded_file and api_key:
             transkript = audio_zu_text(f.name)
             daten = text_zu_daten(transkript, preise_text)
             
-            # Ergebnis schön darstellen
             st.markdown("---")
             c1, c2, c3 = st.columns(3)
             c1.metric("Kunde", daten.get('kunde_name'))
@@ -236,14 +219,12 @@ if uploaded_file and api_key:
             
             pdf_datei = erstelle_bericht_pdf(daten)
             
-            # Statusmeldungen dezent
-            if speichere_in_google_sheets(daten): st.toast("✅ Gespeichert in Google Sheets")
-            else: st.toast("⚠️ Speichern fehlgeschlagen")
+            if speichere_in_google_sheets(daten): st.toast("✅ Gespeichert")
+            else: st.toast("⚠️ Fehler beim Speichern")
                 
             if email_sender: 
                 if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail versendet")
             
-            # Großer Download Button
             with open(pdf_datei, "rb") as f:
                 st.download_button("📄 PDF Bericht herunterladen", f, "Arbeitsbericht.pdf", "primary")
                 
