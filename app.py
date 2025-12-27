@@ -15,29 +15,32 @@ from fpdf import FPDF
 # --- 1. KONFIGURATION & SECRETS LADEN ---
 st.set_page_config(page_title="MeisterBot", page_icon="🛠️")
 
-# Wir versuchen, Daten aus dem Tresor zu holen
+# Wir versuchen, ALLES aus dem Bereich [general] zu laden
 try:
     secrets = st.secrets["general"]
+    
+    # API Key & E-Mail
     api_key_default = secrets.get("openai_api_key", "")
     email_sender_default = secrets.get("email_sender", "")
     email_password_default = secrets.get("email_password", "")
     smtp_server_default = secrets.get("smtp_server", "smtp.ionos.de")
     smtp_port_default = secrets.get("smtp_port", 465)
-    google_sheet_name = "Auftragsbuch" # Festgelegter Name
-except:
-    # Falls keine Secrets da sind, lassen wir die Felder leer
+    
+    # Google Sheets (Wir prüfen nur, ob der Schlüssel da ist)
+    google_json_str = secrets.get("google_json", "")
+    
+except Exception as e:
+    st.error(f"Fehler beim Laden der Secrets: {e}")
     api_key_default = ""
     email_sender_default = ""
     email_password_default = ""
-    smtp_server_default = "smtp.ionos.de"
-    smtp_port_default = 465
-    google_sheet_name = "Auftragsbuch"
+    google_json_str = ""
 
-# Seitenleiste (jetzt oft schon ausgefüllt!)
+# --- SEITENLEISTE (Automatisch oder Manuell) ---
 with st.sidebar:
     st.header("⚙️ Einstellungen")
     
-    # API Key Feld (versteckt, wenn schon im Tresor)
+    # 1. OpenAI Key
     if api_key_default:
         st.success("✅ OpenAI Key geladen")
         api_key = api_key_default
@@ -45,35 +48,47 @@ with st.sidebar:
         api_key = st.text_input("OpenAI API Key", type="password")
     
     st.markdown("---")
-    st.subheader("☁️ Google Sheets")
-    blatt_name = st.text_input("Name der Tabelle", value=google_sheet_name)
+    
+    # 2. Google Sheets
+    if google_json_str:
+        st.success("☁️ Google Sheets verbunden")
+    else:
+        st.warning("⚠️ Google Key fehlt in Secrets")
+        
+    blatt_name = st.text_input("Name der Tabelle", value="Auftragsbuch")
     
     st.markdown("---")
-    st.subheader("📧 E-Mail Versand")
     
-    # E-Mail Felder (automatisch ausgefüllt, wenn im Tresor)
-    smtp_server = st.text_input("SMTP Server", value=smtp_server_default)
-    smtp_port = st.number_input("SMTP Port", value=smtp_port_default)
-    email_sender = st.text_input("Deine E-Mail", value=email_sender_default)
-    
-    # Passwort-Feld: Wenn im Tresor, zeigen wir "Geladen" an
-    if email_password_default:
-        st.info("✅ E-Mail Passwort geladen")
+    # 3. E-Mail
+    # Wir zeigen die Felder nur an, wenn sie NICHT im Tresor sind
+    if email_sender_default and email_password_default:
+        st.success(f"📧 E-Mail Versand aktiv ({email_sender_default})")
+        email_sender = email_sender_default
         email_password = email_password_default
+        smtp_server = smtp_server_default
+        smtp_port = smtp_port_default
+        email_receiver = st.text_input("Empfänger (Büro)", value=email_sender)
     else:
+        st.subheader("📧 E-Mail Versand")
+        smtp_server = st.text_input("SMTP Server", value="smtp.ionos.de")
+        smtp_port = st.number_input("SMTP Port", value=465)
+        email_sender = st.text_input("Deine E-Mail")
         email_password = st.text_input("E-Mail Passwort", type="password")
-        
-    email_receiver = st.text_input("Empfänger (Büro)", value=email_sender)
+        email_receiver = st.text_input("Empfänger (Büro)", value=email_sender)
 
 client = None
 if api_key:
     client = OpenAI(api_key=api_key)
 
-# --- 2. GOOGLE SHEETS FUNKTION ---
+# --- 2. GOOGLE SHEETS FUNKTION (angepasst an neuen Tresor) ---
 def speichere_in_google_sheets(daten):
     try:
-        # Zugriff auf den Tresor (Secrets)
-        creds = st.secrets["gcp_service_account"]
+        if not google_json_str:
+            st.error("Kein Google-Schlüssel gefunden.")
+            return False
+            
+        # Wir wandeln den Text aus den Secrets zurück in ein echtes Schlüssel-Objekt
+        creds = json.loads(google_json_str)
         
         # Anmelden
         gc = gspread.service_account_from_dict(creds)
