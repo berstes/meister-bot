@@ -4,6 +4,7 @@ import json
 import pandas as pd
 import gspread
 import smtplib
+import re
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
@@ -15,18 +16,44 @@ from fpdf import FPDF
 # --- 1. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot", page_icon="🛠️")
 
+# Funktion zum Reparieren von kaputtem JSON (Newlines)
+def clean_json_string(s):
+    if not s: return ""
+    # Schritt 1: Entferne echte Zeilenumbrüche innerhalb von Strings
+    # Wir suchen nach dem Private Key und löschen die echten Umbrüche raus
+    # Das ist ein "Notfall-Patch"
+    try:
+        # Einfacher Versuch: Parse direkt
+        return json.loads(s)
+    except:
+        # Wenn das scheitert, versuchen wir "Strict=False"
+        try:
+            return json.loads(s, strict=False)
+        except:
+            pass
+            
+    # Härtefall: Wir versuchen, die Steuerzeichen manuell zu killen
+    # Wir ersetzen echte Newlines durch \n, aber nur, wenn es kein valides JSON war
+    # Achtung: Das ist Risikoreich, aber oft die Rettung bei Copy-Paste Fehlern
+    fixed = s.replace('\n', '\\n').replace('\r', '')
+    try:
+        return json.loads(fixed)
+    except:
+        return None
+
 # Secrets laden
 api_key_default = st.secrets.get("openai_api_key", "")
 email_sender_default = st.secrets.get("email_sender", "")
 email_password_default = st.secrets.get("email_password", "")
 smtp_server_default = st.secrets.get("smtp_server", "smtp.ionos.de")
 smtp_port_default = st.secrets.get("smtp_port", 465)
-google_json_str = st.secrets.get("google_json", "")
+google_json_raw = st.secrets.get("google_json", "")
 
-# --- SEITENLEISTE ---
+# --- SEITENLEISTE (STATUS) ---
 with st.sidebar:
     st.header("⚙️ Status")
     
+    # 1. OpenAI
     if api_key_default:
         st.success("✅ KI-Schlüssel")
         api_key = api_key_default
@@ -34,22 +61,26 @@ with st.sidebar:
         st.error("❌ KI-Schlüssel fehlt")
         api_key = st.text_input("Key manuell", type="password")
     
-    if google_json_str:
-        st.success("☁️ Google Sheets")
+    # 2. Google Sheets
+    google_creds = clean_json_string(google_json_raw)
+    if google_creds:
+        st.success("☁️ Google Sheets bereit")
     else:
-        st.warning("⚠️ Google Key fehlt")
+        st.error("❌ Google Key Format-Fehler")
+        st.caption("Tipp: Prüfe 'private_key' in Secrets. Er muss EINE lange Zeile sein.")
         
-    blatt_name = st.text_input("Tabellen-Name", value="Auftragsbuch")
+    blatt_name = st.text_input("Tabelle", value="Auftragsbuch")
     
+    # 3. E-Mail
     if email_sender_default and email_password_default:
-        st.success("📧 E-Mail bereit")
+        st.success("📧 E-Mail Daten da")
         email_sender = email_sender_default
         email_password = email_password_default
         smtp_server = smtp_server_default
         smtp_port = smtp_port_default
         email_receiver = st.text_input("Empfänger", value=email_sender)
     else:
-        st.info("E-Mail manuell:")
+        st.info("E-Mail manuell eingeben:")
         smtp_server = st.text_input("SMTP Server", value="smtp.ionos.de")
         smtp_port = st.number_input("SMTP Port", value=465)
         email_sender = st.text_input("Deine E-Mail")
@@ -64,23 +95,24 @@ if api_key:
 
 def speichere_in_google_sheets(daten):
     try:
-        if not google_json_str:
-            st.error("Fehler: Kein Google-Schlüssel.")
+        if not google_creds:
+            st.error("Abbruch: Google-Schlüssel konnte nicht gelesen werden.")
             return False
-        creds = json.loads(google_json_str)
-        gc = gspread.service_account_from_dict(creds)
+            
+        gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         worksheet = sh.get_worksheet(0)
         
         if not worksheet.get_all_values():
-            worksheet.append_row(["Datum", "Kunde", "Adresse", "Problem", "Dringlichkeit"])
+            worksheet.append_row(["Datum", "Kunde", "Adresse", "Problem", "Dringlichkeit", "Terminwunsch"])
             
         neue_zeile = [
             datetime.now().strftime("%d.%m.%Y %H:%M"),
             daten.get('kunde_name'),
             daten.get('adresse'),
             daten.get('problem_titel'),
-            daten.get('dringlichkeit')
+            daten.get('dringlichkeit'),
+            daten.get('termin_wunsch')
         ]
         worksheet.append_row(neue_zeile)
         return True
@@ -94,7 +126,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         msg['From'] = email_sender
         msg['To'] = email_receiver
         msg['Subject'] = f"Auftrag: {daten.get('kunde_name')}"
-        body = f"Neuer Auftrag.\nKunde: {daten.get('kunde_name')}\nProblem: {daten.get('problem_titel')}"
+        body = f"Moin,\n\nneuer Auftrag von {daten.get('kunde_name')}.\nProblem: {daten.get('problem_titel')}\n\nViele Grüße,\nMeisterBot"
         msg.attach(MIMEText(body, 'plain'))
 
         with open(pdf_pfad, "rb") as attachment:
@@ -104,6 +136,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         part.add_header("Content-Disposition", f"attachment; filename={os.path.basename(pdf_pfad)}")
         msg.attach(part)
 
+        # WICHTIG: Server-Verbindung mit Fehlerbehandlung
         if int(smtp_port) == 465:
             server = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
         else:
@@ -117,6 +150,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return True
     except Exception as e:
         st.error(f"Mail Fehler: {e}")
+        st.warning("Prüfe dein Passwort in den Secrets! (Error 535 = Falsches Passwort)")
         return False
 
 def audio_zu_text(dateipfad):
@@ -163,8 +197,7 @@ def erstelle_pdf(daten):
     pdf.cell(0, 10, txt("Auftrag"), 0, 1)
     pdf.ln(5)
     pdf.set_font("Arial", 'B', 11)
-    # HIER WAR DER FEHLER:
-    pdf.set_fill_color(240, 240, 240) 
+    pdf.set_fill_color(240, 240, 240)
     pdf.cell(0, 8, txt("Problembeschreibung:"), 0, 1, fill=True)
     pdf.set_font("Arial", '', 11)
     pdf.multi_cell(0, 6, txt(daten.get('problem_detail', '')))
@@ -185,9 +218,11 @@ if uploaded_file and api_key:
             daten = text_zu_daten(transkript)
             pdf_datei = erstelle_pdf(daten)
             
+            # Google Sheets (mit repariertem Schlüssel)
             if speichere_in_google_sheets(daten): 
                 st.success("✅ Google Sheets gespeichert")
             
+            # E-Mail
             if email_sender and email_password:
                 if sende_email_mit_pdf(pdf_datei, daten): 
                     st.toast("📧 Mail gesendet!")
