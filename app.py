@@ -13,9 +13,8 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot: Live-Preise", page_icon="📈")
+st.set_page_config(page_title="MeisterBot: Safe Mode", page_icon="🛡️")
 
-# JSON-Cleaner (Reparatur-Funktion)
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -45,7 +44,7 @@ with st.sidebar:
     if google_creds: st.success("☁️ Google Sheets aktiv")
     else: st.error("❌ Google Key Fehler")
         
-    blatt_name = st.text_input("Tabelle", value="Auftragsbuch")
+    blatt_name = st.text_input("Google-Datei Name", value="Auftragsbuch")
     
     if email_sender_default: st.success("📧 E-Mail aktiv")
     else: st.info("E-Mail manuell:"); 
@@ -53,40 +52,60 @@ with st.sidebar:
     email_password = email_password_default or st.text_input("Passwort", type="password")
     smtp_server = smtp_server_default or st.text_input("SMTP Server", value="smtp.ionos.de")
     smtp_port = smtp_port_default or st.number_input("SMTP Port", value=465)
-    email_receiver = st.text_input("Empfänger (Büro/DATEV)", value=email_sender)
+    email_receiver = st.text_input("Empfänger", value=email_sender)
 
 client = None
 if api_key: client = OpenAI(api_key=api_key)
 
-# --- 2. FUNKTIONEN: Live-Preise laden ---
+# --- 2. FUNKTIONEN: Live-Preise (ROBUST) ---
 
-def lade_aktuelle_preise():
-    """Holt die Preise frisch aus der Google Tabelle"""
-    if not google_creds:
-        return "Keine Preise gefunden (Google Key fehlt)."
+def lade_preise_sicher():
+    # Standard-Preise als Fallback (falls Google streikt)
+    fallback_text = """
+    STANDARD-PREISLISTE (Fallback):
+    - Anfahrt: 22.00 EUR
+    - Arbeitszeit / Stunde: 77.00 EUR
+    - Toner: ca. 155.00 EUR
+    - Kleinmaterial: 15.00 EUR
+    """
     
+    if not google_creds:
+        return fallback_text, "Google Key fehlt."
+
     try:
         gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        # Wir suchen das Blatt 'Preisliste'
+        # Datei öffnen
+        try:
+            sh = gc.open(blatt_name)
+        except:
+            return fallback_text, f"Konnte Datei '{blatt_name}' nicht finden."
+
+        # Blatt suchen
         try:
             ws = sh.worksheet("Preisliste")
         except:
-            return "FEHLER: Blatt 'Preisliste' nicht gefunden! Bitte in Google Sheets anlegen."
+            # Zeige dem Nutzer, welche Blätter da sind
+            vorhandene = [s.title for s in sh.worksheets()]
+            return fallback_text, f"Blatt 'Preisliste' fehlt! Gefunden: {vorhandene}"
             
-        # Alle Daten holen
-        daten = ws.get_all_records() # Erwartet Spalten 'Artikel' und 'Preis'
-        
-        # In Text umwandeln für die KI
-        preis_text = "AKTUELLE PREISLISTE (aus Google Sheets):\n"
+        # Daten holen
+        daten = ws.get_all_records()
+        if not daten:
+            return fallback_text, "Blatt 'Preisliste' ist leer oder Spaltenüberschriften fehlen (Zeile 1: Artikel, Preis)."
+
+        # Erfolg!
+        live_text = "AKTUELLE PREISLISTE (Live aus Cloud):\n"
         for zeile in daten:
-            artikel = zeile.get('Artikel', '')
-            preis = zeile.get('Preis', '')
-            preis_text += f"- {artikel}: {preis} EUR\n"
+            # Wir suchen flexibel nach Spaltennamen (Groß/Kleinschreibung egal machen wir hier manuell)
+            # Wir nehmen an Spalte 1 = Artikel, Spalte 2 = Preis
+            artikel = list(zeile.values())[0]
+            preis = list(zeile.values())[1]
+            live_text += f"- {artikel}: {preis} EUR\n"
             
-        return preis_text
+        return live_text, None # None bedeutet: Kein Fehler
+
     except Exception as e:
-        return f"Fehler beim Laden der Preise: {e}"
+        return fallback_text, f"Unbekannter Fehler: {e}"
 
 # --- 3. INTELLIGENZ (KI) ---
 
@@ -95,15 +114,14 @@ def audio_zu_text(dateipfad):
     return client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
 
 def text_zu_daten(rohtext, preisliste_text):
-    
     system_befehl = f"""
-    Du bist ein Assistent für Handwerker (Interwark). Erstelle einen Arbeitsbericht für DATEV.
+    Du bist ein Assistent für Handwerker. Erstelle einen Arbeitsbericht für DATEV.
     
     {preisliste_text}
     
     Aufgabe:
-    1. Analysiere den Text. Suche passende Artikel aus der Preisliste.
-    2. Wenn ein Artikel (z.B. "Anfahrt") genannt wird, nutze EXAKT den Preis aus der Liste.
+    1. Analysiere den Text.
+    2. WICHTIG: Wenn ein Artikel aus der Liste genannt wird, nutze EXAKT diesen Preis.
     3. Berechne Netto, 19% MwSt und Brutto.
     
     Gib JSON zurück:
@@ -112,11 +130,11 @@ def text_zu_daten(rohtext, preisliste_text):
       "adresse": "...",
       "problem_titel": "...",
       "positionen": [
-        {{ "text": "Anfahrt", "menge": 1, "einzel_netto": 22.00, "gesamt_netto": 22.00 }}
+        {{ "text": "...", "menge": 1, "einzel_netto": 0.00, "gesamt_netto": 0.00 }}
       ],
-      "summe_netto": 100.00,
-      "mwst_betrag": 19.00,
-      "summe_brutto": 119.00
+      "summe_netto": 0.00,
+      "mwst_betrag": 0.00,
+      "summe_brutto": 0.00
     }}
     """
     response = client.chat.completions.create(
@@ -202,25 +220,20 @@ def erstelle_bericht_pdf(daten):
     
     pdf.ln(10)
     pdf.set_font("Arial", 'I', 8)
-    pdf.multi_cell(0, 5, txt("Hinweis: Dies ist ein Leistungsnachweis. Vorlage für DATEV. Keine Rechnung i.S.d. §14 UStG."))
+    pdf.multi_cell(0, 5, txt("Hinweis: Dient als Vorlage für DATEV. Keine Rechnung i.S.d. §14 UStG."))
 
     dateiname = "arbeitsbericht.pdf"
     pdf.output(dateiname)
     return dateiname
-
-# --- 5. SPEICHERN & SENDEN ---
 
 def speichere_in_google_sheets(daten):
     try:
         if not google_creds: return False
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
-        # Wir speichern ins ERSTE Blatt (Auftragsbuch)
         worksheet = sh.get_worksheet(0)
-        
         if not worksheet.get_all_values():
             worksheet.append_row(["Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
-            
         neue_zeile = [
             datetime.now().strftime("%d.%m.%Y"),
             daten.get('kunde_name'),
@@ -232,7 +245,6 @@ def speichere_in_google_sheets(daten):
         worksheet.append_row(neue_zeile)
         return True
     except Exception as e:
-        st.error(f"Google Fehler: {e}")
         return False
 
 def sende_email_mit_pdf(pdf_pfad, daten):
@@ -241,51 +253,45 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         msg['From'] = email_sender
         msg['To'] = email_receiver
         msg['Subject'] = f"Bericht: {daten.get('kunde_name')}"
-        body = f"Moin,\n\nneuer Bericht.\nNetto: {daten.get('summe_netto')} EUR\nBrutto: {daten.get('summe_brutto')} EUR"
+        body = f"Moin,\n\nneuer Bericht.\nBrutto: {daten.get('summe_brutto')} EUR"
         msg.attach(MIMEText(body, 'plain'))
-
         with open(pdf_pfad, "rb") as attachment:
             p = MIMEBase("application", "octet-stream")
             p.set_payload(attachment.read())
         encoders.encode_base64(p)
         p.add_header("Content-Disposition", f"attachment; filename={os.path.basename(pdf_pfad)}")
         msg.attach(p)
-
         if int(smtp_port) == 465: s = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
         else: s = smtplib.SMTP(smtp_server, int(smtp_port)); s.starttls()
-            
         s.login(email_sender, email_password)
         s.sendmail(email_sender, email_receiver, msg.as_string())
         s.quit()
         return True
-    except Exception as e:
-        st.error(f"Mail Fehler: {e}")
-        return False
+    except: return False
 
 # --- APP START ---
-st.title("📝 MeisterBot: Live-Preise")
+st.title("📝 MeisterBot")
 
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"])
 
 if uploaded_file and api_key:
     with st.spinner("⏳ Lade Preise & Analysiere..."):
-        # 1. PREISE LADEN
-        aktuelle_preise = lade_aktuelle_preise()
         
-        # Falls die Tabelle "Preisliste" fehlt, warnen wir, machen aber weiter
-        if "FEHLER" in aktuelle_preise:
-            st.warning(aktuelle_preise)
+        # 1. PREISE LADEN (Mit Fehlermeldung, falls was schiefgeht)
+        aktuelle_preise, fehler = lade_preise_sicher()
+        
+        if fehler:
+            st.warning(f"⚠️ Hinweis: Nutze Standard-Preise, weil: {fehler}")
+            with st.expander("Details anzeigen"):
+                st.write(fehler)
         else:
-            with st.expander("👀 Aktuelle Preisliste ansehen"):
-                st.text(aktuelle_preise)
+            st.success("✅ Live-Preise geladen!")
 
         with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f:
             f.write(uploaded_file.getbuffer())
         
         try:
             transkript = audio_zu_text(f.name)
-            
-            # 2. KI mit LIVE-PREISEN füttern
             daten = text_zu_daten(transkript, aktuelle_preise)
             
             # Vorschau
@@ -294,7 +300,7 @@ if uploaded_file and api_key:
             col2.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
             
             pdf_datei = erstelle_bericht_pdf(daten)
-            if speichere_in_google_sheets(daten): st.success("✅ Tabelle aktualisiert")
+            if speichere_in_google_sheets(daten): st.success("✅ Tabelle gespeichert")
             if email_sender and email_password:
                 if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail raus!")
             
