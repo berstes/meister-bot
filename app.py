@@ -12,25 +12,57 @@ from datetime import datetime
 from openai import OpenAI
 from fpdf import FPDF
 
-# --- 1. KONFIGURATION ---
+# --- 1. KONFIGURATION & SECRETS LADEN ---
 st.set_page_config(page_title="MeisterBot", page_icon="🛠️")
 
-# Seitenleiste
+# Wir versuchen, Daten aus dem Tresor zu holen
+try:
+    secrets = st.secrets["general"]
+    api_key_default = secrets.get("openai_api_key", "")
+    email_sender_default = secrets.get("email_sender", "")
+    email_password_default = secrets.get("email_password", "")
+    smtp_server_default = secrets.get("smtp_server", "smtp.ionos.de")
+    smtp_port_default = secrets.get("smtp_port", 465)
+    google_sheet_name = "Auftragsbuch" # Festgelegter Name
+except:
+    # Falls keine Secrets da sind, lassen wir die Felder leer
+    api_key_default = ""
+    email_sender_default = ""
+    email_password_default = ""
+    smtp_server_default = "smtp.ionos.de"
+    smtp_port_default = 465
+    google_sheet_name = "Auftragsbuch"
+
+# Seitenleiste (jetzt oft schon ausgefüllt!)
 with st.sidebar:
     st.header("⚙️ Einstellungen")
-    api_key = st.text_input("OpenAI API Key", type="password")
+    
+    # API Key Feld (versteckt, wenn schon im Tresor)
+    if api_key_default:
+        st.success("✅ OpenAI Key geladen")
+        api_key = api_key_default
+    else:
+        api_key = st.text_input("OpenAI API Key", type="password")
     
     st.markdown("---")
     st.subheader("☁️ Google Sheets")
-    # Name deiner Tabelle bei Google Drive
-    blatt_name = st.text_input("Name der Tabelle", value="Auftragsbuch")
+    blatt_name = st.text_input("Name der Tabelle", value=google_sheet_name)
     
     st.markdown("---")
     st.subheader("📧 E-Mail Versand")
-    smtp_server = st.text_input("SMTP Server", value="smtp.ionos.de")
-    smtp_port = st.number_input("SMTP Port", value=465)
-    email_sender = st.text_input("Deine E-Mail")
-    email_password = st.text_input("E-Mail Passwort", type="password")
+    
+    # E-Mail Felder (automatisch ausgefüllt, wenn im Tresor)
+    smtp_server = st.text_input("SMTP Server", value=smtp_server_default)
+    smtp_port = st.number_input("SMTP Port", value=smtp_port_default)
+    email_sender = st.text_input("Deine E-Mail", value=email_sender_default)
+    
+    # Passwort-Feld: Wenn im Tresor, zeigen wir "Geladen" an
+    if email_password_default:
+        st.info("✅ E-Mail Passwort geladen")
+        email_password = email_password_default
+    else:
+        email_password = st.text_input("E-Mail Passwort", type="password")
+        
     email_receiver = st.text_input("Empfänger (Büro)", value=email_sender)
 
 client = None
@@ -41,17 +73,18 @@ if api_key:
 def speichere_in_google_sheets(daten):
     try:
         # Zugriff auf den Tresor (Secrets)
-        gc = gspread.service_account_from_dict(st.secrets["gcp_service_account"])
+        creds = st.secrets["gcp_service_account"]
+        
+        # Anmelden
+        gc = gspread.service_account_from_dict(creds)
         
         # Tabelle öffnen
         sh = gc.open(blatt_name)
-        worksheet = sh.get_worksheet(0) # Das erste Tabellenblatt nehmen
+        worksheet = sh.get_worksheet(0)
         
-        # Wenn leer, Überschriften schreiben
         if not worksheet.get_all_values():
             worksheet.append_row(["Datum", "Kunde", "Adresse", "Problem", "Dringlichkeit", "Terminwunsch"])
             
-        # Daten vorbereiten
         neue_zeile = [
             datetime.now().strftime("%d.%m.%Y %H:%M"),
             daten.get('kunde_name'),
@@ -60,8 +93,6 @@ def speichere_in_google_sheets(daten):
             daten.get('dringlichkeit'),
             daten.get('termin_wunsch')
         ]
-        
-        # Senden
         worksheet.append_row(neue_zeile)
         return True
     except Exception as e:
@@ -76,7 +107,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         msg['To'] = email_receiver
         msg['Subject'] = f"Auftrag: {daten.get('kunde_name')}"
 
-        body = f"Neuer Auftrag von {daten.get('kunde_name')}.\nProblem: {daten.get('problem_titel')}"
+        body = f"Moin,\n\nneuer Auftrag von {daten.get('kunde_name')}.\n\nProblem: {daten.get('problem_titel')}\nAdresse: {daten.get('adresse')}\n\nViele Grüße,\nMeisterBot"
         msg.attach(MIMEText(body, 'plain'))
 
         with open(pdf_pfad, "rb") as attachment:
@@ -179,27 +210,27 @@ st.write("Lade eine WhatsApp-Sprachnachricht hoch.")
 uploaded_file = st.file_uploader("Datei wählen", type=["mp3", "wav", "m4a", "ogg", "opus"])
 
 if uploaded_file and api_key:
-    st.info("Verarbeite...")
-    with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f:
-        f.write(uploaded_file.getbuffer())
+    with st.spinner("⏳ Analysiere Audio..."):
+        with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f:
+            f.write(uploaded_file.getbuffer())
         
-    try:
-        transkript = audio_zu_text(f.name)
-        daten = text_zu_daten(transkript)
-        pdf_datei = erstelle_pdf(daten)
-        
-        # 1. Google Sheets
-        if speichere_in_google_sheets(daten):
-            st.success("✅ In Google Sheets gespeichert!")
-        
-        # 2. E-Mail
-        if email_sender and email_password:
-            if sende_email_mit_pdf(pdf_datei, daten):
-                st.toast("📧 E-Mail gesendet!", icon="📨")
-        
-        # 3. Download
-        with open(pdf_datei, "rb") as pdf_file:
-            st.download_button("📄 PDF herunterladen", pdf_file, "Auftrag.pdf", "application/pdf")
+        try:
+            transkript = audio_zu_text(f.name)
+            daten = text_zu_daten(transkript)
+            pdf_datei = erstelle_pdf(daten)
             
-    except Exception as e:
-        st.error(f"Fehler: {e}")
+            # 1. Google Sheets
+            if speichere_in_google_sheets(daten):
+                st.success("✅ In Google Sheets gespeichert!")
+            
+            # 2. E-Mail
+            if email_sender and email_password:
+                if sende_email_mit_pdf(pdf_datei, daten):
+                    st.toast("📧 E-Mail gesendet!", icon="📨")
+            
+            # 3. Download
+            with open(pdf_datei, "rb") as pdf_file:
+                st.download_button("📄 PDF herunterladen", pdf_file, "Auftrag.pdf", "application/pdf")
+                
+        except Exception as e:
+            st.error(f"Fehler: {e}")
