@@ -122,41 +122,85 @@ class PDF(FPDF):
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
 def erstelle_bericht_pdf(daten):
-    pdf = PDF(); pdf.add_page()
+    pdf = PDF()
+    pdf.add_page()
+    
+    # Hilfsfunktion für Sonderzeichen (Umlaute)
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
-    pdf.set_font("Arial", 'B', 12); pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
-    pdf.set_font("Arial", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
-    pdf.ln(10); pdf.set_font("Arial", 'B', 16); pdf.cell(0, 10, txt("Leistungsnachweis / Arbeitsbericht"), 0, 1)
-    pdf.set_font("Arial", '', 10); pdf.cell(0, 5, txt(f"Betreff: {daten.get('problem_titel')} | Datum: {datetime.now().strftime('%d.%m.%Y')}"), 0, 1)
+    # 1. Empfänger
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
+    pdf.set_font("Arial", '', 12)
+    pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
+    
+    # 2. Rechnungs-Titel & Nummer (DAS IST NEU)
+    pdf.ln(15)
+    pdf.set_font("Arial", 'B', 20)
+    # Hier nutzen wir die Nummer aus Schritt 1
+    rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
+    pdf.cell(0, 10, txt(f"Rechnung Nr. {rechnungs_nr}"), 0, 1)
+    
+    # 3. Datum & Betreff
+    pdf.set_font("Arial", '', 10)
+    datum_heute = datetime.now().strftime('%d.%m.%Y')
+    pdf.cell(0, 5, txt(f"Rechnungsdatum: {datum_heute}"), 0, 1)
+    pdf.cell(0, 5, txt(f"Bauvorhaben/Betreff: {daten.get('problem_titel')}"), 0, 1)
     pdf.ln(10)
     
-    pdf.set_fill_color(240, 240, 240); pdf.set_font("Arial", 'B', 10)
-    pdf.cell(10, 8, "#", 1, 0, 'C', 1); pdf.cell(90, 8, "Leistung", 1, 0, 'L', 1)
-    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1); pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1); pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
+    # 4. Tabelle Header
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(10, 8, "#", 1, 0, 'C', 1)
+    pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
+    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1)
+    pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
+    pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
-    pdf.set_font("Arial", '', 10); i = 1
+    # 5. Positionen
+    pdf.set_font("Arial", '', 10)
+    i = 1
     for pos in daten.get('positionen', []):
-        text = txt(pos.get('text', '')); menge = str(pos.get('menge', ''))
-        einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ','); gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
-        pdf.cell(10, 8, str(i), 1, 0, 'C'); pdf.cell(90, 8, text, 1, 0, 'L'); pdf.cell(20, 8, menge, 1, 0, 'C')
-        pdf.cell(30, 8, einzel, 1, 0, 'R'); pdf.cell(30, 8, gesamt, 1, 1, 'R'); i += 1
+        text = txt(pos.get('text', ''))
+        menge = str(pos.get('menge', ''))
+        einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ',')
+        gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
+        
+        pdf.cell(10, 8, str(i), 1, 0, 'C')
+        pdf.cell(90, 8, text, 1, 0, 'L')
+        pdf.cell(20, 8, menge, 1, 0, 'C')
+        pdf.cell(30, 8, einzel, 1, 0, 'R')
+        pdf.cell(30, 8, gesamt, 1, 1, 'R')
+        i += 1
     
+    # 6. Summenblock
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
     
-    pdf.ln(5); pdf.set_font("Arial", '', 11)
-    pdf.cell(150, 6, "Summe Netto:", 0, 0, 'R'); pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
-    pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R'); pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
+    pdf.ln(5)
+    pdf.set_font("Arial", '', 11)
+    pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R')
+    pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
     
-    pdf.ln(10); pdf.set_font("Arial", 'I', 8)
-    pdf.multi_cell(0, 5, txt("Hinweis: Dient als Vorlage für DATEV. Keine Rechnung i.S.d. §14 UStG."))
+    pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R')
+    pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
+    
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(150, 10, "Zahlbetrag:", 0, 0, 'R')
+    pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
+    
+    # 7. Zahlungshinweis (NEU)
+    pdf.ln(15)
+    pdf.set_font("Arial", '', 10)
+    pdf.multi_cell(0, 5, txt("Bitte überweisen Sie den Betrag sofort und ohne Abzug auf das unten genannte Konto."))
+    pdf.ln(2)
+    pdf.set_font("Arial", 'I', 8)
+    pdf.cell(0, 5, txt(f"Leistungszeitraum entspricht dem Rechnungsdatum, sofern nicht anders angegeben."), 0, 1)
 
-    dateiname = "arbeitsbericht.pdf"
-    pdf.output(dateiname); return dateiname
+    dateiname = f"Rechnung_{rechnungs_nr}.pdf"
+    pdf.output(dateiname)
+    return dateiname
 
 # --- 5. SPEICHERN & SENDEN (FIX FÜR IPHONE) ---
 
@@ -246,4 +290,5 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
