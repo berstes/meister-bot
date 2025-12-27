@@ -165,9 +165,25 @@ def speichere_in_google_sheets(daten):
         if not google_creds: return False
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name); worksheet = sh.get_worksheet(0)
-        if not worksheet.get_all_values(): worksheet.append_row(["Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
-        neue_zeile = [datetime.now().strftime("%d.%m.%Y"), daten.get('kunde_name'), daten.get('problem_titel'), str(daten.get('summe_netto')).replace('.', ','), str(daten.get('mwst_betrag')).replace('.', ','), str(daten.get('summe_brutto')).replace('.', ',')]
-        worksheet.append_row(neue_zeile); return True
+        
+        # Header anpassen: Rechnungs-Nr kommt nach vorne
+        if not worksheet.get_all_values(): 
+            worksheet.append_row(["Rechnungs-Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
+        
+        # Hier nutzen wir die Nummer, die wir vorher generiert und in 'daten' gespeichert haben
+        rechnungs_nr = daten.get('rechnungs_nr', '')
+        
+        neue_zeile = [
+            rechnungs_nr,
+            datetime.now().strftime("%d.%m.%Y"), 
+            daten.get('kunde_name'), 
+            daten.get('problem_titel'), 
+            str(daten.get('summe_netto')).replace('.', ','), 
+            str(daten.get('mwst_betrag')).replace('.', ','), 
+            str(daten.get('summe_brutto')).replace('.', ',')
+        ]
+        worksheet.append_row(neue_zeile)
+        return True
     except: return False
 
 def sende_email_mit_pdf(pdf_pfad, daten):
@@ -230,3 +246,4 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
