@@ -128,26 +128,29 @@ def erstelle_bericht_pdf(daten):
     # Hilfsfunktion für Sonderzeichen
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
-    # 1. Empfänger
+    # 1. Empfänger (oben links)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
     pdf.set_font("Arial", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # 2. Titel (GEÄNDERT: Arbeitsbericht statt Rechnung)
-    pdf.ln(15)
+    # 2. Titel & Datum & Betreff (Deine Anpassungen)
+    pdf.ln(15) # Etwas Abstand nach unten
+    
+    # Zeile 1: Die Nummer
     pdf.set_font("Arial", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
-    # Hier steht jetzt "Arbeitsbericht Nr."
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), 0, 1)
     
-    # 3. Datum & Betreff
+    # Zeile 2: Das Datum
     pdf.set_font("Arial", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
-    # Label hier auch angepasst
-    pdf.cell(0, 5, txt(f"Datum: {datum_heute}"), 0, 1)
-    pdf.cell(0, 5, txt(f"Bauvorhaben/Betreff: {daten.get('problem_titel')}"), 0, 1)
-    pdf.ln(10)
+    pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), 0, 1)
+    
+    # Zeile 3: Projekt/Betreff
+    pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), 0, 1)
+    
+    pdf.ln(10) # Abstand zur Tabelle
     
     # 4. Tabelle Header
     pdf.set_fill_color(240, 240, 240)
@@ -191,19 +194,16 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    # 7. Hinweis unten
+    # 7. Abschluss-Text (neutral)
     pdf.ln(15)
     pdf.set_font("Arial", '', 10)
-    # Hier habe ich den Text neutraler gemacht, falls es noch keine Rechnung ist:
-    pdf.multi_cell(0, 5, txt("Dieser Bericht dient als Leistungsnachweis."))
-    pdf.ln(2)
-    pdf.set_font("Arial", 'I', 8)
-    pdf.cell(0, 5, txt(f"Leistungszeitraum entspricht dem Datum, sofern nicht anders angegeben."), 0, 1)
-
-    # Dateiname angepasst
+    pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
+    
     dateiname = f"Arbeitsbericht_{rechnungs_nr}.pdf"
     pdf.output(dateiname)
     return dateiname
+
+
 # --- 5. SPEICHERN & SENDEN (FIX FÜR IPHONE) ---
 
 def speichere_in_google_sheets(daten):
@@ -333,6 +333,7 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
 
