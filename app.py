@@ -13,9 +13,9 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot: DATEV Vorlage", page_icon="📝")
+st.set_page_config(page_title="MeisterBot: Live-Preise", page_icon="📈")
 
-# JSON-Cleaner (Reparatur-Funktion für den Google Key)
+# JSON-Cleaner (Reparatur-Funktion)
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -58,30 +58,53 @@ with st.sidebar:
 client = None
 if api_key: client = OpenAI(api_key=api_key)
 
-# --- 2. INTELLIGENZ (KI mit MwSt) ---
+# --- 2. FUNKTIONEN: Live-Preise laden ---
+
+def lade_aktuelle_preise():
+    """Holt die Preise frisch aus der Google Tabelle"""
+    if not google_creds:
+        return "Keine Preise gefunden (Google Key fehlt)."
+    
+    try:
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_name)
+        # Wir suchen das Blatt 'Preisliste'
+        try:
+            ws = sh.worksheet("Preisliste")
+        except:
+            return "FEHLER: Blatt 'Preisliste' nicht gefunden! Bitte in Google Sheets anlegen."
+            
+        # Alle Daten holen
+        daten = ws.get_all_records() # Erwartet Spalten 'Artikel' und 'Preis'
+        
+        # In Text umwandeln für die KI
+        preis_text = "AKTUELLE PREISLISTE (aus Google Sheets):\n"
+        for zeile in daten:
+            artikel = zeile.get('Artikel', '')
+            preis = zeile.get('Preis', '')
+            preis_text += f"- {artikel}: {preis} EUR\n"
+            
+        return preis_text
+    except Exception as e:
+        return f"Fehler beim Laden der Preise: {e}"
+
+# --- 3. INTELLIGENZ (KI) ---
 
 def audio_zu_text(dateipfad):
     audio_file = open(dateipfad, "rb")
     return client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
 
-def text_zu_daten(rohtext):
-    preisliste = """
-    PREISLISTE (NETTO-Preise):
-    - Anfahrt: 22.00 EUR
-    - Arbeitszeit / Stunde: 77.00 EUR
-    - Toner: ca. 155.00 EUR
-    - Pauschale Kleinmaterial: 15.00 EUR
-    """
+def text_zu_daten(rohtext, preisliste_text):
     
     system_befehl = f"""
-    Du bist ein Assistent für Handwerker (Interwark). Erstelle einen Arbeitsbericht für die Buchhaltung.
-    {preisliste}
+    Du bist ein Assistent für Handwerker (Interwark). Erstelle einen Arbeitsbericht für DATEV.
+    
+    {preisliste_text}
     
     Aufgabe:
-    1. Liste alle Positionen auf (mit Netto-Einzelpreisen).
-    2. Berechne die Summe Netto.
-    3. Berechne 19% MwSt.
-    4. Berechne die Summe Brutto.
+    1. Analysiere den Text. Suche passende Artikel aus der Preisliste.
+    2. Wenn ein Artikel (z.B. "Anfahrt") genannt wird, nutze EXAKT den Preis aus der Liste.
+    3. Berechne Netto, 19% MwSt und Brutto.
     
     Gib JSON zurück:
     {{
@@ -103,7 +126,7 @@ def text_zu_daten(rohtext):
     )
     return json.loads(response.choices[0].message.content)
 
-# --- 3. PDF (ARBEITSBERICHT) ---
+# --- 4. PDF ---
 
 class PDF(FPDF):
     def header(self):
@@ -128,31 +151,26 @@ def erstelle_bericht_pdf(daten):
     pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
-    # Info-Block
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
     pdf.set_font("Arial", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
-    
     pdf.ln(10)
     pdf.set_font("Arial", 'B', 16)
-    # TITEL GEÄNDERT FÜR DATEV
     pdf.cell(0, 10, txt("Arbeitsbericht / Leistungsnachweis"), 0, 1)
     pdf.set_font("Arial", '', 10)
     pdf.cell(0, 5, txt(f"Betreff: {daten.get('problem_titel')} | Datum: {datetime.now().strftime('%d.%m.%Y')}"), 0, 1)
-    
     pdf.ln(10)
     
-    # Tabelle Kopf
+    # Tabelle
     pdf.set_fill_color(220, 220, 220)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1)
     pdf.cell(90, 8, "Leistung", 1, 0, 'L', 1)
     pdf.cell(20, 8, "Menge", 1, 0, 'C', 1)
-    pdf.cell(30, 8, "Einzel (Netto)", 1, 0, 'R', 1)
-    pdf.cell(30, 8, "Gesamt (Netto)", 1, 1, 'R', 1)
+    pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
+    pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
-    # Positionen
     pdf.set_font("Arial", '', 10)
     i = 1
     for pos in daten.get('positionen', []):
@@ -168,7 +186,6 @@ def erstelle_bericht_pdf(daten):
         pdf.cell(30, 8, gesamt, 1, 1, 'R')
         i += 1
         
-    # Rechenblock (Netto / MwSt / Brutto)
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -177,30 +194,28 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font("Arial", '', 11)
     pdf.cell(150, 6, "Summe Netto:", 0, 0, 'R')
     pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
-    
     pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R')
     pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
-    
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(150, 10, "Gesamtsumme (Brutto):", 0, 0, 'R')
+    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    # Rechtlicher Hinweis für DATEV
     pdf.ln(10)
     pdf.set_font("Arial", 'I', 8)
-    pdf.multi_cell(0, 5, txt("Hinweis: Dies ist ein Leistungsnachweis/Arbeitsbericht. Dient als Vorlage zur Rechnungserstellung in DATEV. Keine Rechnung im Sinne des §14 UStG."))
+    pdf.multi_cell(0, 5, txt("Hinweis: Dies ist ein Leistungsnachweis. Vorlage für DATEV. Keine Rechnung i.S.d. §14 UStG."))
 
     dateiname = "arbeitsbericht.pdf"
     pdf.output(dateiname)
     return dateiname
 
-# --- 4. SPEICHERN & SENDEN ---
+# --- 5. SPEICHERN & SENDEN ---
 
 def speichere_in_google_sheets(daten):
     try:
         if not google_creds: return False
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
+        # Wir speichern ins ERSTE Blatt (Auftragsbuch)
         worksheet = sh.get_worksheet(0)
         
         if not worksheet.get_all_values():
@@ -226,7 +241,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         msg['From'] = email_sender
         msg['To'] = email_receiver
         msg['Subject'] = f"Bericht: {daten.get('kunde_name')}"
-        body = f"Moin,\n\nanbei der Arbeitsbericht für {daten.get('kunde_name')}.\n\nNetto: {daten.get('summe_netto')} EUR\nBrutto: {daten.get('summe_brutto')} EUR\n\nGruß,\nMeisterBot"
+        body = f"Moin,\n\nneuer Bericht.\nNetto: {daten.get('summe_netto')} EUR\nBrutto: {daten.get('summe_brutto')} EUR"
         msg.attach(MIMEText(body, 'plain'))
 
         with open(pdf_pfad, "rb") as attachment:
@@ -248,38 +263,43 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return False
 
 # --- APP START ---
-st.title("📝 MeisterBot: Bericht")
-st.info("Erstellt einen Arbeitsbericht (Netto/MwSt) für DATEV.")
+st.title("📝 MeisterBot: Live-Preise")
 
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"])
 
 if uploaded_file and api_key:
-    with st.spinner("⏳ Erstelle Bericht..."):
+    with st.spinner("⏳ Lade Preise & Analysiere..."):
+        # 1. PREISE LADEN
+        aktuelle_preise = lade_aktuelle_preise()
+        
+        # Falls die Tabelle "Preisliste" fehlt, warnen wir, machen aber weiter
+        if "FEHLER" in aktuelle_preise:
+            st.warning(aktuelle_preise)
+        else:
+            with st.expander("👀 Aktuelle Preisliste ansehen"):
+                st.text(aktuelle_preise)
+
         with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f:
             f.write(uploaded_file.getbuffer())
+        
         try:
             transkript = audio_zu_text(f.name)
-            st.caption(f"Text: {transkript}")
             
-            daten = text_zu_daten(transkript)
+            # 2. KI mit LIVE-PREISEN füttern
+            daten = text_zu_daten(transkript, aktuelle_preise)
             
-            # Vorschau der Zahlen
-            col1, col2, col3 = st.columns(3)
+            # Vorschau
+            col1, col2 = st.columns(2)
             col1.metric("Netto", f"{daten.get('summe_netto'):.2f} €")
-            col2.metric("MwSt (19%)", f"{daten.get('mwst_betrag'):.2f} €")
-            col3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
+            col2.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
             
             pdf_datei = erstelle_bericht_pdf(daten)
-            
-            if speichere_in_google_sheets(daten): 
-                st.success("✅ Tabelle aktualisiert")
-            
+            if speichere_in_google_sheets(daten): st.success("✅ Tabelle aktualisiert")
             if email_sender and email_password:
-                if sende_email_mit_pdf(pdf_datei, daten): 
-                    st.toast("📧 An Büro gesendet!")
+                if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail raus!")
             
             with open(pdf_datei, "rb") as pdf_file:
-                st.download_button("📄 Bericht laden", pdf_file, "Arbeitsbericht.pdf", "application/pdf")
+                st.download_button("📄 PDF laden", pdf_file, "Bericht.pdf", "application/pdf")
                 
         except Exception as e:
             st.error(f"Fehler: {e}")
