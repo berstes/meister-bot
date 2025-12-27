@@ -255,6 +255,38 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         print(f"Mail Fehler: {e}")
         return False
 
+def hole_neue_rechnungsnummer():
+    # Standard-Startnummer für das neue Jahr (Jahr + 3 Ziffern)
+    start_nummer = 2025001
+    
+    if not google_creds: 
+        return str(start_nummer) # Fallback ohne Cloud
+    
+    try:
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_name)
+        worksheet = sh.get_worksheet(0)
+        
+        # Wir nehmen an, die Nummer steht in Spalte A (Index 1)
+        spalte_a = worksheet.col_values(1)
+        
+        if not spalte_a:
+            return str(start_nummer)
+            
+        letzter_wert = spalte_a[-1]
+        
+        # Prüfen, ob der letzte Wert eine Zahl ist (Header "Rechnungs-Nr" überspringen)
+        if letzter_wert.isdigit():
+            neue_nummer = int(letzter_wert) + 1
+            return str(neue_nummer)
+        else:
+            # Falls da "Datum" oder Text steht, fangen wir neu an
+            return str(start_nummer)
+    except Exception as e:
+        print(f"Fehler bei Nummerierung: {e}")
+        return str(start_nummer)
+
+
 # --- APP START ---
 st.title("📝 MeisterBot")
 st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
@@ -290,5 +322,6 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
