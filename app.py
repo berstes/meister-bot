@@ -324,10 +324,16 @@ if uploaded_file and api_key:
                 if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail versendet")
             
             with open(pdf_datei, "rb") as f:
-                st.download_button("📄 PDF Bericht herunterladen", f, "Arbeitsbericht.pdf", "primary")
+                c_dl1.download_button(
+                    label="📄 Arbeitsbericht PDF", # Label angepasst
+                    data=f,
+                    file_name=f"Arbeitsbericht_{daten.get('rechnungs_nr')}.pdf", # Name angepasst
+                    mime="application/pdf",
+                )
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
 
