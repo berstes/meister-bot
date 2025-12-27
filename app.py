@@ -302,6 +302,10 @@ if uploaded_file and api_key:
         try:
             transkript = audio_zu_text(f.name)
             daten = text_zu_daten(transkript, preise_text)
+
+            # --- HIER FEHLT WAHRSCHEINLICH DIESE ZEILE: ---
+            daten['rechnungs_nr'] = hole_neue_rechnungsnummer() 
+            # ----------------------------------------------
             
             st.markdown("---")
             c1, c2, c3 = st.columns(3)
@@ -322,6 +326,7 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
 
