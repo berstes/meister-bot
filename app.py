@@ -125,7 +125,7 @@ def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
     
-    # Hilfsfunktion für Sonderzeichen (Umlaute)
+    # Hilfsfunktion für Sonderzeichen
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
     # 1. Empfänger
@@ -134,17 +134,18 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font("Arial", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # 2. Rechnungs-Titel & Nummer (DAS IST NEU)
+    # 2. Titel (GEÄNDERT: Arbeitsbericht statt Rechnung)
     pdf.ln(15)
     pdf.set_font("Arial", 'B', 20)
-    # Hier nutzen wir die Nummer aus Schritt 1
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
-    pdf.cell(0, 10, txt(f"Rechnung Nr. {rechnungs_nr}"), 0, 1)
+    # Hier steht jetzt "Arbeitsbericht Nr."
+    pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), 0, 1)
     
     # 3. Datum & Betreff
     pdf.set_font("Arial", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
-    pdf.cell(0, 5, txt(f"Rechnungsdatum: {datum_heute}"), 0, 1)
+    # Label hier auch angepasst
+    pdf.cell(0, 5, txt(f"Datum: {datum_heute}"), 0, 1)
     pdf.cell(0, 5, txt(f"Bauvorhaben/Betreff: {daten.get('problem_titel')}"), 0, 1)
     pdf.ln(10)
     
@@ -187,21 +188,22 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
     
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(150, 10, "Zahlbetrag:", 0, 0, 'R')
+    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    # 7. Zahlungshinweis (NEU)
+    # 7. Hinweis unten
     pdf.ln(15)
     pdf.set_font("Arial", '', 10)
-    pdf.multi_cell(0, 5, txt("Bitte überweisen Sie den Betrag sofort und ohne Abzug auf das unten genannte Konto."))
+    # Hier habe ich den Text neutraler gemacht, falls es noch keine Rechnung ist:
+    pdf.multi_cell(0, 5, txt("Dieser Bericht dient als Leistungsnachweis."))
     pdf.ln(2)
     pdf.set_font("Arial", 'I', 8)
-    pdf.cell(0, 5, txt(f"Leistungszeitraum entspricht dem Rechnungsdatum, sofern nicht anders angegeben."), 0, 1)
+    pdf.cell(0, 5, txt(f"Leistungszeitraum entspricht dem Datum, sofern nicht anders angegeben."), 0, 1)
 
-    dateiname = f"Rechnung_{rechnungs_nr}.pdf"
+    # Dateiname angepasst
+    dateiname = f"Arbeitsbericht_{rechnungs_nr}.pdf"
     pdf.output(dateiname)
     return dateiname
-
 # --- 5. SPEICHERN & SENDEN (FIX FÜR IPHONE) ---
 
 def speichere_in_google_sheets(daten):
@@ -326,6 +328,7 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
 
