@@ -229,4 +229,57 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         body = f"Moin,\n\nanbei der Arbeitsbericht für {daten.get('kunde_name')}.\n\nNetto: {daten.get('summe_netto')} EUR\nBrutto: {daten.get('summe_brutto')} EUR\n\nGruß,\nMeisterBot"
         msg.attach(MIMEText(body, 'plain'))
 
-        with open(pdf_pfad, "rb
+        with open(pdf_pfad, "rb") as attachment:
+            p = MIMEBase("application", "octet-stream")
+            p.set_payload(attachment.read())
+        encoders.encode_base64(p)
+        p.add_header("Content-Disposition", f"attachment; filename={os.path.basename(pdf_pfad)}")
+        msg.attach(p)
+
+        if int(smtp_port) == 465: s = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
+        else: s = smtplib.SMTP(smtp_server, int(smtp_port)); s.starttls()
+            
+        s.login(email_sender, email_password)
+        s.sendmail(email_sender, email_receiver, msg.as_string())
+        s.quit()
+        return True
+    except Exception as e:
+        st.error(f"Mail Fehler: {e}")
+        return False
+
+# --- APP START ---
+st.title("📝 MeisterBot: Bericht")
+st.info("Erstellt einen Arbeitsbericht (Netto/MwSt) für DATEV.")
+
+uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"])
+
+if uploaded_file and api_key:
+    with st.spinner("⏳ Erstelle Bericht..."):
+        with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        try:
+            transkript = audio_zu_text(f.name)
+            st.caption(f"Text: {transkript}")
+            
+            daten = text_zu_daten(transkript)
+            
+            # Vorschau der Zahlen
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Netto", f"{daten.get('summe_netto'):.2f} €")
+            col2.metric("MwSt (19%)", f"{daten.get('mwst_betrag'):.2f} €")
+            col3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
+            
+            pdf_datei = erstelle_bericht_pdf(daten)
+            
+            if speichere_in_google_sheets(daten): 
+                st.success("✅ Tabelle aktualisiert")
+            
+            if email_sender and email_password:
+                if sende_email_mit_pdf(pdf_datei, daten): 
+                    st.toast("📧 An Büro gesendet!")
+            
+            with open(pdf_datei, "rb") as pdf_file:
+                st.download_button("📄 Bericht laden", pdf_file, "Arbeitsbericht.pdf", "application/pdf")
+                
+        except Exception as e:
+            st.error(f"Fehler: {e}")
