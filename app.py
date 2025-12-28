@@ -3,7 +3,7 @@ import os
 import json
 import time
 import smtplib
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --- 1. SICHERHEITS-START ---
 api_key = None
@@ -30,7 +30,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot 3.0", page_icon="🚀")
+st.set_page_config(page_title="MeisterBot 3.1", page_icon="📊")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -51,8 +51,8 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     
-    # MODUS UMBENANNT: Statt "Rechnung" jetzt "Bericht & DATEV"
-    modus = st.radio("Modus:", ("Bericht & DATEV erstellen", "Auftrag annehmen"))
+    # NEUER MODUS "CHEF-DASHBOARD" ALS ERSTES!
+    modus = st.radio("Modus:", ("Chef-Dashboard", "Bericht & DATEV erstellen", "Auftrag annehmen"))
     st.markdown("---")
     
     api_key_default = st.secrets.get("openai_api_key", "")
@@ -85,6 +85,64 @@ if api_key:
         st.error(f"Fehler: {e}")
 
 # --- 6. LOGIK ---
+
+def lade_statistik_daten():
+    """Lädt und berechnet die Statistik aus dem Google Sheet."""
+    if not google_creds: return None, None, None, None
+    try:
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_name)
+        
+        # 1. Rechnungen laden (Blatt 1)
+        ws_rechnungen = sh.get_worksheet(0)
+        data = ws_rechnungen.get_all_records()
+        df = pd.DataFrame(data)
+        
+        # Datentypen putzen
+        # Wir suchen Spalten die "Datum" und "Brutto" heißen könnten
+        # Falls Header anders heißen, passen wir das hier an
+        if 'Datum' not in df.columns or 'Brutto' not in df.columns:
+            return "Fehler: Spalten 'Datum' oder 'Brutto' nicht gefunden.", None, None, None
+
+        # Datum konvertieren
+        df['Datum'] = pd.to_datetime(df['Datum'], format='%d.%m.%Y', errors='coerce')
+        
+        # Geld konvertieren (1.234,56 -> 1234.56)
+        # Wir entfernen Tausenderpunkte und ersetzen Komma durch Punkt
+        def putze_geld(x):
+            if isinstance(x, (int, float)): return float(x)
+            if not isinstance(x, str): return 0.0
+            return float(x.replace('.', '').replace(',', '.'))
+            
+        df['Brutto_Zahl'] = df['Brutto'].apply(putze_geld)
+        
+        # --- BERECHNUNGEN ---
+        heute = pd.Timestamp.now()
+        dieser_monat = heute.month
+        dieses_jahr = heute.year
+        
+        # Umsatz dieser Monat
+        df_monat = df[(df['Datum'].dt.month == dieser_monat) & (df['Datum'].dt.year == dieses_jahr)]
+        umsatz_monat = df_monat['Brutto_Zahl'].sum()
+        
+        # Anzahl Aufträge heute
+        anzahl_heute = len(df[df['Datum'].dt.date == heute.date()])
+        
+        # Anzahl Aufträge diese Woche
+        # Wir nutzen ISO Kalenderwoche
+        aktuelle_kw = heute.isocalendar()[1]
+        df['KW'] = df['Datum'].dt.isocalendar().week
+        anzahl_woche = len(df[(df['KW'] == aktuelle_kw) & (df['Datum'].dt.year == dieses_jahr)])
+        
+        # Verlauf letzte 6 Monate für Chart
+        # Wir gruppieren nach Monat (z.B. "2025-01")
+        df['Monat_Jahr'] = df['Datum'].dt.strftime('%Y-%m')
+        chart_data = df.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
+        
+        return umsatz_monat, anzahl_heute, anzahl_woche, chart_data
+
+    except Exception as e:
+        return f"Fehler: {e}", None, None, None
 
 def lade_kunden_live():
     if not google_creds: return "Keine Cloud-Verbindung."
@@ -200,7 +258,6 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # TITEL: ARBEITSBERICHT
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
@@ -232,19 +289,11 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    # --- DER RECHTLICHE HINWEIS ---
-    pdf.ln(15)
-    pdf.set_font("Helvetica", 'I', 9)
-    # Dein gewünschter Paragraph:
-    hinweis = (
-        "Hinweis: Dieses Dokument dient als Leistungsnachweis und Buchungsvorlage.\n"
-        "Keine Rechnung im Sinne des §14 UStG."
-    )
+    pdf.ln(15); pdf.set_font("Helvetica", 'I', 9)
+    hinweis = "Hinweis: Dieses Dokument dient als Leistungsnachweis und Buchungsvorlage.\nKeine Rechnung im Sinne des §14 UStG."
     pdf.multi_cell(0, 5, txt(hinweis))
     
-    # Optional: Bankverbindung für Überweisung (klein)
-    pdf.ln(5)
-    pdf.set_font("Helvetica", '', 8)
+    pdf.ln(5); pdf.set_font("Helvetica", '', 8)
     bank_info = "Bank: Sparkasse Emden | IBAN: DE00 0000 0000 0000 0000 00"
     pdf.cell(0, 5, txt(bank_info), 0, 1, 'C')
     
@@ -284,24 +333,41 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("🚀 MeisterBot 3.0")
+st.title("📊 MeisterBot 3.1")
 
-# Modus-Variable wird oben in Sidebar definiert
-if 'modus' not in locals(): modus = "Bericht & DATEV erstellen"
+if modus == "Chef-Dashboard":
+    st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
+    
+    if api_key and google_creds:
+        with st.spinner("Lade Zahlen..."):
+            umsatz, anzahl_heute, anzahl_woche, chart_data = lade_statistik_daten()
+            
+            if isinstance(umsatz, str) and umsatz.startswith("Fehler"):
+                st.error(umsatz)
+            else:
+                # 3 dicke Zahlen nebeneinander
+                k1, k2, k3 = st.columns(3)
+                k1.metric("Umsatz (Monat)", f"{umsatz:,.2f} €".replace(",", "X").replace(".", ",").replace("X", "."))
+                k2.metric("Aufträge (Heute)", str(anzahl_heute))
+                k3.metric("Aufträge (Woche)", str(anzahl_woche))
+                
+                st.markdown("---")
+                st.subheader("📈 Umsatzverlauf (letzte 6 Monate)")
+                if chart_data is not None and not chart_data.empty:
+                    st.bar_chart(chart_data)
+                else:
+                    st.info("Noch nicht genug Daten für ein Diagramm.")
+    else:
+        st.warning("Bitte erst API Keys eintragen.")
 
-if modus == "Bericht & DATEV erstellen":
+elif modus == "Bericht & DATEV erstellen":
     st.caption("Modus: 🔵 Arbeitsbericht erstellen")
-else:
-    st.caption("Modus: 🟠 Neuen Auftrag anlegen")
+    f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
 
-f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
-
-if f and api_key and client:
-    
-    dateiendung = f.name.split('.')[-1]
-    temp_filename = f"temp_audio.{dateiendung}"
-    
-    if modus == "Bericht & DATEV erstellen":
+    if f and api_key and client:
+        dateiendung = f.name.split('.')[-1]
+        temp_filename = f"temp_audio.{dateiendung}"
+        
         with st.spinner("⏳ Erstelle Bericht..."):
             with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
@@ -331,8 +397,14 @@ if f and api_key and client:
                 if email_sender: 
                     if sende_mail(pdf, dat): st.toast("📧 Mail raus")
             except Exception as e: st.error(f"Fehler: {e}")
-            
-    else: 
+
+else: # AUFTRAG ANNEHMEN
+    st.caption("Modus: 🟠 Neuen Auftrag anlegen")
+    f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
+
+    if f and api_key and client:
+        dateiendung = f.name.split('.')[-1]
+        temp_filename = f"temp_audio.{dateiendung}"
         with st.spinner("⏳ Erfasse Auftrag..."):
             with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
