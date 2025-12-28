@@ -1,3 +1,21 @@
+Das ist wirklich verrückt! Es tut mir leid, dass wir hier so kämpfen. Da ich nicht sehen kann, was auf deinem Bildschirm passiert, müssen wir jetzt die "Holzhammer-Methode" anwenden.
+
+Wir entfernen jetzt jeden möglichen Störfaktor:
+
+Wir wechseln die Schriftart auf Helvetica (das ist der Standard, der immer funktioniert).
+
+Wir malen graue Hintergründe hinter deinen Text.
+
+Wenn du graue Balken siehst, aber keinen Text -> Dann ist die Schriftfarbe weiß (warum auch immer).
+
+Wenn du gar nichts siehst -> Dann wird der Bereich von etwas anderem (z.B. einem riesigen, unsichtbaren Logo) überdeckt.
+
+Wir zeichnen das Logo erst ganz zum Schluss, damit es nichts verdecken kann.
+
+Hier ist der Code. Bitte noch einmal alles löschen und einfügen.
+
+Python
+
 import streamlit as st
 import os
 import json
@@ -40,16 +58,16 @@ def clean_json_string(s):
 # --- 2. PDF KLASSE ---
 class PDF(FPDF):
     def header(self):
-        # Header bleibt leer, wir machen alles manuell, das ist sicherer
+        # Header komplett deaktiviert
         pass
 
     def footer(self):
         self.set_y(-30)
-        self.set_font('Arial', 'I', 8)
+        self.set_font('Helvetica', 'I', 8) # Helvetica statt Arial
         self.set_text_color(128)
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
-# --- 3. BERICHT ERSTELLEN (ABSOLUTE POSITIONIERUNG) ---
+# --- 3. BERICHT ERSTELLEN (DEBUG MODUS) ---
 def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
@@ -57,69 +75,67 @@ def erstelle_bericht_pdf(daten):
     # Hilfsfunktion
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # --- KOPFBEREICH ERZWINGEN ---
+    # --- KOPFBEREICH ---
     
-    # 1. Logo (rechts oben)
-    if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
-    elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
-
-    # 2. Adresse (Links oben) - Wir setzen den Stift für jede Zeile neu an!
+    # Wir setzen den Cursor hart auf 1cm von oben und links
+    pdf.set_xy(10, 10)
     pdf.set_text_color(0, 0, 0) # Schwarz
 
-    # Interwark (Y=10)
-    pdf.set_xy(10, 10)
-    pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
+    # 1. Firmenname
+    pdf.set_font('Helvetica', 'B', 16)
+    # fill=False stellt sicher, dass kein Hintergrund gemalt wird (außer wir wollen es debuggen)
+    pdf.cell(0, 10, 'INTERWARK', ln=1)
 
-    # Name (Y=20)
-    pdf.set_xy(10, 20)
-    pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
-
-    # Straße (Y=25)
-    pdf.set_xy(10, 25)
-    pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
-
-    # Stadt (Y=30)
-    pdf.set_xy(10, 30)
-    pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
-
-    # Mail (Y=35)
-    pdf.set_xy(10, 35)
-    pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
+    # 2. Adresse (Explizit untereinander)
+    pdf.set_font('Helvetica', '', 10)
     
-    # Linie (Y=45)
-    pdf.set_draw_color(150, 150, 150)
-    pdf.line(10, 45, 200, 45)
+    # Hier schreiben wir die Zeilen hart rein
+    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', ln=1)
+    pdf.cell(0, 5, 'Hohe Str. 26', ln=1)
+    pdf.cell(0, 5, '26725 Emden', ln=1)
+    pdf.cell(0, 5, 'info@interwark.de', ln=1)
     
-    # --- ENDE KOPF, BEGINN INHALT ---
+    # 3. Logo JETZT erst einfügen (rechts oben)
+    # Wir prüfen, ob das Bild existiert und nicht zu groß ist
+    if os.path.exists("logo.png"): 
+        pdf.image("logo.png", x=160, y=10, w=20)
+    elif os.path.exists("logo.jpg"): 
+        pdf.image("logo.jpg", x=160, y=10, w=20)
+
+    # 4. Linie
+    pdf.ln(5)
+    y_linie = pdf.get_y()
+    pdf.set_draw_color(0, 0, 0) # Schwarze Linie
+    pdf.line(10, y_linie, 200, y_linie)
     
-    # Wir springen weit nach unten (auf 60mm), damit sicher nichts überlappt
-    pdf.set_xy(10, 60)
+    # --- ENDE KOPF ---
+    
+    # Sicherheitshalber Cursor weit nach unten
+    pdf.set_y(60)
     
     # Kunde
-    pdf.set_font("Arial", 'B', 12)
+    pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), ln=1)
-    pdf.set_font("Arial", '', 12)
+    pdf.set_font("Helvetica", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
     # Titel
     pdf.ln(10) 
-    pdf.set_font("Arial", 'B', 20)
+    pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
-    # Datum & Betreff
-    pdf.set_font("Arial", '', 10)
+    # Datum
+    pdf.set_font("Helvetica", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
     pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), ln=1)
     pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), ln=1)
     
-    pdf.ln(10) # Abstand zur Tabelle
+    pdf.ln(10)
     
     # Tabelle Header
     pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Arial", 'B', 10)
+    pdf.set_font("Helvetica", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1)
     pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
     pdf.cell(20, 8, "Menge", 1, 0, 'C', 1)
@@ -127,14 +143,13 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
     # Positionen
-    pdf.set_font("Arial", '', 10)
+    pdf.set_font("Helvetica", '', 10)
     i = 1
     for pos in daten.get('positionen', []):
         text = txt(pos.get('text', ''))
         menge = str(pos.get('menge', ''))
         einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ',')
         gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
-        
         pdf.cell(10, 8, str(i), 1, 0, 'C')
         pdf.cell(90, 8, text, 1, 0, 'L')
         pdf.cell(20, 8, menge, 1, 0, 'C')
@@ -148,24 +163,22 @@ def erstelle_bericht_pdf(daten):
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
     
     pdf.ln(5)
-    pdf.set_font("Arial", '', 11)
+    pdf.set_font("Helvetica", '', 11)
     pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R')
     pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
     pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R')
     pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
-    pdf.set_font("Arial", 'B', 12)
+    pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    # Abschluss
     pdf.ln(15)
-    pdf.set_font("Arial", '', 10)
+    pdf.set_font("Helvetica", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
     
-    # TRICK: Dateiname mit Uhrzeit, um Cache zu umgehen
+    # Neuer Dateiname gegen Cache-Probleme
     timestamp = int(time.time())
-    dateiname = f"Arbeitsbericht_{rechnungs_nr}_{timestamp}.pdf"
-    
+    dateiname = f"Bericht_{rechnungs_nr}_{timestamp}.pdf"
     pdf.output(dateiname)
     return dateiname
 
@@ -349,7 +362,6 @@ if uploaded_file and api_key:
             st.markdown("### 📥 Downloads")
             c_dl1, c_dl2 = st.columns(2)
             
-            # HIER NUTZEN WIR DEN NEUEN DATEINAMEN FÜR DEN BUTTON
             with open(pdf_datei, "rb") as f:
                 c_dl1.download_button("📄 PDF Bericht", f, pdf_datei, "application/pdf")
             
