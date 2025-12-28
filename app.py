@@ -5,19 +5,7 @@ import time
 import smtplib
 from datetime import datetime
 
-# --- 1. SICHERHEITS-START: VARIABLEN VORDEFINIEREN ---
-# Das verhindert den "NameError", den du im Screenshot hattest
-api_key = None
-client = None
-email_sender = None
-email_receiver = None
-smtp_server = "smtp.ionos.de"
-smtp_port = 465
-email_password = None
-google_creds = None
-blatt_name = "Auftragsbuch"
-
-# Imports sicher laden
+# --- 1. SICHERHEITS-START: IMPORTS & VARIABLEN ---
 try:
     import pandas as pd
     import gspread
@@ -30,6 +18,17 @@ try:
 except ImportError as e:
     st.error(f"Fehler beim Laden von Modulen: {e}")
     st.stop()
+
+# Globale Variablen initialisieren
+api_key = None
+client = None
+email_sender = None
+email_receiver = None
+smtp_server = "smtp.ionos.de"
+smtp_port = 465
+email_password = None
+google_creds = None
+blatt_name = "Auftragsbuch"
 
 # --- 2. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot 3.0", page_icon="🚀")
@@ -45,7 +44,7 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 4. SEITENLEISTE (API KEYS LADEN) ---
+# --- 4. SEITENLEISTE (EINSTELLUNGEN) ---
 with st.sidebar:
     st.header("⚙️ Einstellungen")
     
@@ -59,7 +58,7 @@ with st.sidebar:
     modus = st.radio("Modus:", ("Rechnung schreiben", "Auftrag annehmen"))
     st.markdown("---")
     
-    # 1. OpenAI Key laden
+    # 1. OpenAI Key
     api_key_default = st.secrets.get("openai_api_key", "")
     if api_key_default:
         api_key = api_key_default
@@ -68,14 +67,14 @@ with st.sidebar:
         api_key = st.text_input("OpenAI Key", type="password")
         if not api_key: st.error("❌ KI Key fehlt")
 
-    # 2. Google Cloud laden
+    # 2. Google Cloud
     google_json_raw = st.secrets.get("google_json", "")
     google_creds = clean_json_string(google_json_raw)
     if google_creds: st.success("☁️ Cloud aktiv")
     
     blatt_name = st.text_input("Google Sheet Name", value="Auftragsbuch")
     
-    # 3. Email laden
+    # 3. Email
     email_sender = st.secrets.get("email_sender", "")
     email_password = st.secrets.get("email_password", "")
     smtp_server = st.secrets.get("smtp_server", "smtp.ionos.de")
@@ -84,17 +83,15 @@ with st.sidebar:
     if email_sender: 
         st.success("📧 Mail aktiv")
         email_receiver = st.text_input("Empfänger", value=email_sender)
-    else:
-        st.info("Keine E-Mail konfiguriert")
 
-# --- 5. CLIENT INITIALISIEREN (NACHDEM API KEY GELADEN WURDE) ---
+# --- 5. CLIENT STARTEN ---
 if api_key:
     try:
         client = OpenAI(api_key=api_key)
     except Exception as e:
         st.error(f"Fehler: {e}")
 
-# --- 6. LOGIK & FUNKTIONEN ---
+# --- 6. LOGIK-FUNKTIONEN ---
 
 def baue_datev_datei(daten):
     umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -116,7 +113,7 @@ def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # KOPF (Manuell & Sicher)
+    # KOPF
     pdf.set_text_color(0, 0, 0)
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
@@ -160,7 +157,6 @@ def erstelle_bericht_pdf(daten):
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
-    
     pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R'); pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
     pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R'); pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
     pdf.set_font("Helvetica", 'B', 12)
@@ -184,6 +180,7 @@ def lade_preise_live():
     except: return "Preise: Standard"
 
 def audio_zu_text(pfad):
+    # Hier öffnet OpenAI die Datei. Die Datei MUSS eine Endung haben (z.B. .mp3, .m4a)
     f = open(pfad, "rb")
     return client.audio.transcriptions.create(model="whisper-1", file=f, response_format="text")
 
@@ -219,7 +216,7 @@ def speichere_auftrag(d):
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name)
         try: ws = sh.worksheet("Offene Aufträge")
-        except: ws = sh.add_worksheet("Offene Aufträge", 100, 10)
+        except: ws = sh.add_worksheet(title="Offene Aufträge", rows=100, cols=10)
         if not ws.get_all_values(): ws.append_row(["Datum", "Kunde", "Adresse", "Kontakt", "Problem", "Termin"])
         ws.append_row([datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('adresse'), d.get('kontakt'), d.get('problem'), d.get('termin')])
         return True
@@ -237,22 +234,36 @@ def sende_mail(pfad, d):
         s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
     except: return False
 
-# --- 7. HAUPTPROGRAMM ---
-st.title("🚀 MeisterBot 3.0") # Wenn du das siehst, hat das Update geklappt!
+# --- 7. HAUPTPROGRAMM (APP START) ---
+st.title("🚀 MeisterBot 3.0")
 
 if modus == "Rechnung schreiben":
     st.caption("Modus: 🔵 Rechnung & PDF erstellen")
 else:
     st.caption("Modus: 🟠 Neuen Auftrag anlegen")
 
-f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
+uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
 
-if f and api_key and client:
+if uploaded_file and api_key and client:
+    
+    # FIX FÜR ERROR 400: WIR ERMITTELN DIE RICHTIGE DATEI-ENDUNG
+    dateiendung = uploaded_file.name.split('.')[-1]
+    temp_filename = f"temp_audio.{dateiendung}"
+    
+    # ------------------------------------------------
+    # MODUS 1: RECHNUNG SCHREIBEN
+    # ------------------------------------------------
     if modus == "Rechnung schreiben":
         with st.spinner("⏳ Erstelle Rechnung..."):
-            with open("temp_audio", "wb") as file: file.write(f.getbuffer())
+            
+            # DATEI MIT RICHTIGER ENDUNG SPEICHERN
+            with open(temp_filename, "wb") as file: 
+                file.write(uploaded_file.getbuffer())
+            
             try:
-                txt = audio_zu_text("temp_audio")
+                # DATEI MIT RICHTIGEM NAMEN AN OPENAI SENDEN
+                txt = audio_zu_text(temp_filename)
+                
                 preise = lade_preise_live()
                 dat = text_zu_daten(txt, preise)
                 dat['rechnungs_nr'] = hole_nr()
@@ -275,11 +286,18 @@ if f and api_key and client:
                     if sende_mail(pdf, dat): st.toast("📧 Mail raus")
             except Exception as e: st.error(f"Fehler: {e}")
             
-    else: # AUFTRAGS MODUS
+    # ------------------------------------------------
+    # MODUS 2: AUFTRAG ANNEHMEN
+    # ------------------------------------------------
+    else:
         with st.spinner("⏳ Erfasse Auftrag..."):
-            with open("temp_audio", "wb") as file: file.write(f.getbuffer())
+            
+            # AUCH HIER: DATEI MIT RICHTIGER ENDUNG SPEICHERN
+            with open(temp_filename, "wb") as file: 
+                file.write(uploaded_file.getbuffer())
+                
             try:
-                txt = audio_zu_text("temp_audio")
+                txt = audio_zu_text(temp_filename)
                 auf = text_zu_auftrag(txt)
                 st.success(f"Auftrag von {auf.get('kunde_name')}")
                 st.json(auf)
