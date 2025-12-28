@@ -128,14 +128,14 @@ def erstelle_bericht_pdf(daten):
     # Hilfsfunktion für Sonderzeichen
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
-    # 1. Empfänger (oben links)
+    # 1. Empfänger
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
     pdf.set_font("Arial", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # 2. Titel & Datum & Betreff (Deine Anpassungen)
-    pdf.ln(15) # Etwas Abstand nach unten
+    # 2. Titel & Datum & Betreff (NEU)
+    pdf.ln(15) 
     
     # Zeile 1: Die Nummer
     pdf.set_font("Arial", 'B', 20)
@@ -194,7 +194,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    # 7. Abschluss-Text (neutral)
+    # 7. Abschluss-Text
     pdf.ln(15)
     pdf.set_font("Arial", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
@@ -333,6 +333,7 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
 
