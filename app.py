@@ -5,7 +5,17 @@ import time
 import smtplib
 from datetime import datetime
 
-# --- 1. SICHERHEITS-START: IMPORTS & VARIABLEN ---
+# --- 1. SICHERHEITS-START ---
+api_key = None
+client = None
+email_sender = None
+email_receiver = None
+smtp_server = "smtp.ionos.de"
+smtp_port = 465
+email_password = None
+google_creds = None
+blatt_name = "Auftragsbuch"
+
 try:
     import pandas as pd
     import gspread
@@ -19,21 +29,10 @@ except ImportError as e:
     st.error(f"Fehler beim Laden von Modulen: {e}")
     st.stop()
 
-# Globale Variablen initialisieren
-api_key = None
-client = None
-email_sender = None
-email_receiver = None
-smtp_server = "smtp.ionos.de"
-smtp_port = 465
-email_password = None
-google_creds = None
-blatt_name = "Auftragsbuch"
-
 # --- 2. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot 3.0", page_icon="🚀")
 
-# --- 3. HELFER-FUNKTIONEN ---
+# --- 3. HELFER ---
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -44,37 +43,30 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 4. SEITENLEISTE (EINSTELLUNGEN) ---
+# --- 4. SEITENLEISTE ---
 with st.sidebar:
     st.header("⚙️ Einstellungen")
-    
-    # Reset Knopf
     if st.button("🔄 App Reset / Neu laden"):
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
     
-    # Modus Auswahl
     modus = st.radio("Modus:", ("Rechnung schreiben", "Auftrag annehmen"))
     st.markdown("---")
     
-    # 1. OpenAI Key
     api_key_default = st.secrets.get("openai_api_key", "")
     if api_key_default:
         api_key = api_key_default
         st.success("✅ KI aktiv")
     else:
         api_key = st.text_input("OpenAI Key", type="password")
-        if not api_key: st.error("❌ KI Key fehlt")
 
-    # 2. Google Cloud
     google_json_raw = st.secrets.get("google_json", "")
     google_creds = clean_json_string(google_json_raw)
     if google_creds: st.success("☁️ Cloud aktiv")
     
     blatt_name = st.text_input("Google Sheet Name", value="Auftragsbuch")
     
-    # 3. Email
     email_sender = st.secrets.get("email_sender", "")
     email_password = st.secrets.get("email_password", "")
     smtp_server = st.secrets.get("smtp_server", "smtp.ionos.de")
@@ -84,14 +76,95 @@ with st.sidebar:
         st.success("📧 Mail aktiv")
         email_receiver = st.text_input("Empfänger", value=email_sender)
 
-# --- 5. CLIENT STARTEN ---
+# --- 5. CLIENT ---
 if api_key:
     try:
         client = OpenAI(api_key=api_key)
     except Exception as e:
         st.error(f"Fehler: {e}")
 
-# --- 6. LOGIK-FUNKTIONEN ---
+# --- 6. LOGIK ---
+
+def lade_kunden_live():
+    """Lädt Kunden: A=Name, B=Str, C=PLZ, D=Ort, E=KdNr, F=Anrede."""
+    if not google_creds: return "Keine Cloud-Verbindung."
+    try:
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_name)
+        try: ws = sh.worksheet("Kunden")
+        except: return "Hinweis: Tabellenblatt 'Kunden' fehlt."
+            
+        alle_daten = ws.get_all_values()
+        if len(alle_daten) < 2: return "Keine Kunden gespeichert."
+        
+        kunden_text = "BEKANNTE KUNDEN:\n"
+        for zeile in alle_daten[1:]:
+            if len(zeile) >= 1:
+                name = zeile[0]
+                strasse = zeile[1] if len(zeile) > 1 else ""
+                plz = zeile[2] if len(zeile) > 2 else ""
+                ort = zeile[3] if len(zeile) > 3 else ""
+                kd_nr = zeile[4] if len(zeile) > 4 else ""
+                anrede = zeile[5] if len(zeile) > 5 else "" # NEU: Spalte F
+                
+                # Wir bauen alles zusammen für die KI
+                kunden_text += f"- Name: {name} | Anrede: {anrede} | Adresse: {strasse}, {plz} {ort} | KdNr: {kd_nr}\n"
+        return kunden_text
+    except Exception as e:
+        return f"Fehler Kunden-DB: {e}"
+
+def lade_preise_live():
+    if not google_creds: return "Preise: Standard"
+    try:
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_name); ws = sh.worksheet("Preisliste")
+        alle = ws.get_all_values(); txt = "PREISLISTE:\n"
+        for z in alle[1:]:
+            if len(z)>=2: txt += f"- {z[0]}: {z[1]} EUR\n"
+        return txt
+    except: return "Preise: Standard"
+
+def audio_zu_text(pfad):
+    f = open(pfad, "rb")
+    return client.audio.transcriptions.create(model="whisper-1", file=f, response_format="text")
+
+def text_zu_daten(txt, preise, kunden_db):
+    sys = f"""
+    Du bist Buchhalter (Interwark).
+    PREISE: {preise}
+    KUNDEN-DB: {kunden_db}
+    
+    AUFGABE:
+    1. Suche Kunde in DB.
+    2. Wenn gefunden -> Nimm 'anrede', 'kunde_name', 'adresse', 'kundennummer' exakt aus der DB.
+    3. Wenn nicht -> Rate die Daten aus dem Text.
+    
+    JSON FORMAT:
+    {{
+      "anrede": "Herr/Frau/Firma",
+      "kunde_name": "Name",
+      "adresse": "Str, PLZ Ort",
+      "kundennummer": "1000",
+      "problem_titel": "Betreff",
+      "positionen": [ {{ "text": "Leistung", "menge": 1.0, "einzel_netto": 0.00, "gesamt_netto": 0.00 }} ],
+      "summe_netto": 0.00, "mwst_betrag": 0.00, "summe_brutto": 0.00
+    }}
+    """
+    res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
+    return json.loads(res.choices[0].message.content)
+
+def text_zu_auftrag(txt, kunden_db):
+    sys = f"Du bist Sekretär. KUNDEN-DB: {kunden_db}. Extrahiere JSON: {{'kunde_name':'Name', 'anrede':'Herr/Frau', 'adresse':'Adr', 'kontakt':'Tel', 'problem':'Prob', 'termin':'Wann'}}"
+    res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
+    return json.loads(res.choices[0].message.content)
+
+def hole_nr():
+    if not google_creds: return "2025001"
+    try:
+        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
+        col = ws.col_values(1); last = col[-1] if col else "0"
+        return str(int(last)+1) if last.isdigit() else "2025001"
+    except: return "2025001"
 
 def baue_datev_datei(daten):
     umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -99,8 +172,10 @@ def baue_datev_datei(daten):
     rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
     raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
     buchungstext = raw_text.replace(";", " ")[:60]
+    gegenkonto = daten.get('kundennummer')
+    if not gegenkonto or str(gegenkonto) == "None": gegenkonto = "1410"
     header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
-    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
+    line = f"{umsatz};S;EUR;8400;{gegenkonto};{datum};{rechnungs_nr};{buchungstext}"
     return f"{header}\n{line}"
 
 class PDF(FPDF):
@@ -128,9 +203,28 @@ def erstelle_bericht_pdf(daten):
     
     # INHALT
     pdf.set_y(55)
-    pdf.set_font("Helvetica", 'B', 12); pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), ln=1)
+    pdf.set_font("Helvetica", 'B', 12)
+    
+    # --- ADRESSFELD NEU MIT ANREDE ---
+    anrede = daten.get('anrede', '')
+    name = daten.get('kunde_name', '')
+    
+    # Wenn Anrede da ist, schreiben wir sie in die erste Zeile
+    if anrede and anrede != "None":
+        pdf.cell(0, 5, txt(anrede), ln=1)
+        
+    pdf.cell(0, 5, txt(name), ln=1)
+    
+    # Kundennummer (kleiner darunter)
+    kd = daten.get('kundennummer', '')
+    if kd: 
+        pdf.set_font("Helvetica", '', 9)
+        pdf.cell(0, 5, txt(f"Kundennr.: {kd}"), ln=1)
+        pdf.set_font("Helvetica", 'B', 12) # Zurück zu Fett
+        
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
+    # REST
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
@@ -168,46 +262,12 @@ def erstelle_bericht_pdf(daten):
     ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
     pdf.output(dateiname); return dateiname
 
-def lade_preise_live():
-    if not google_creds: return "Preise: Standard"
-    try:
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name); ws = sh.worksheet("Preisliste")
-        alle = ws.get_all_values(); txt = "PREISLISTE:\n"
-        for z in alle[1:]:
-            if len(z)>=2: txt += f"- {z[0]}: {z[1]} EUR\n"
-        return txt
-    except: return "Preise: Standard"
-
-def audio_zu_text(pfad):
-    # Hier öffnet OpenAI die Datei. Die Datei MUSS eine Endung haben (z.B. .mp3, .m4a)
-    f = open(pfad, "rb")
-    return client.audio.transcriptions.create(model="whisper-1", file=f, response_format="text")
-
-def text_zu_daten(txt, preise):
-    sys = f"Du bist Buchhalter. {preise}. Gib JSON: {{'kunde_name': 'Name', 'adresse': 'Adr', 'problem_titel': 'Titel', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}"
-    res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
-    return json.loads(res.choices[0].message.content)
-
-def text_zu_auftrag(txt):
-    sys = "Du bist Sekretär. Extrahiere JSON: {'kunde_name':'Name', 'adresse':'Adr', 'kontakt':'Tel', 'problem':'Prob', 'termin':'Wann'}"
-    res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
-    return json.loads(res.choices[0].message.content)
-
-def hole_nr():
-    if not google_creds: return "2025001"
-    try:
-        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        col = ws.col_values(1); last = col[-1] if col else "0"
-        return str(int(last)+1) if last.isdigit() else "2025001"
-    except: return "2025001"
-
 def speichere_rechnung(d):
     if not google_creds: return False
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        if not ws.get_all_values(): ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
-        ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',',')])
+        if not ws.get_all_values(): ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr"])
+        ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',','), d.get('kundennummer', '')])
         return True
     except: return False
 
@@ -216,7 +276,7 @@ def speichere_auftrag(d):
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name)
         try: ws = sh.worksheet("Offene Aufträge")
-        except: ws = sh.add_worksheet(title="Offene Aufträge", rows=100, cols=10)
+        except: ws = sh.add_worksheet("Offene Aufträge", 100, 10)
         if not ws.get_all_values(): ws.append_row(["Datum", "Kunde", "Adresse", "Kontakt", "Problem", "Termin"])
         ws.append_row([datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('adresse'), d.get('kontakt'), d.get('problem'), d.get('termin')])
         return True
@@ -234,7 +294,7 @@ def sende_mail(pfad, d):
         s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
     except: return False
 
-# --- 7. HAUPTPROGRAMM (APP START) ---
+# --- 7. HAUPTPROGRAMM ---
 st.title("🚀 MeisterBot 3.0")
 
 if modus == "Rechnung schreiben":
@@ -242,35 +302,31 @@ if modus == "Rechnung schreiben":
 else:
     st.caption("Modus: 🟠 Neuen Auftrag anlegen")
 
-uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
+f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
 
-if uploaded_file and api_key and client:
+if f and api_key and client:
     
-    # FIX FÜR ERROR 400: WIR ERMITTELN DIE RICHTIGE DATEI-ENDUNG
-    dateiendung = uploaded_file.name.split('.')[-1]
+    dateiendung = f.name.split('.')[-1]
     temp_filename = f"temp_audio.{dateiendung}"
     
-    # ------------------------------------------------
-    # MODUS 1: RECHNUNG SCHREIBEN
-    # ------------------------------------------------
     if modus == "Rechnung schreiben":
         with st.spinner("⏳ Erstelle Rechnung..."):
-            
-            # DATEI MIT RICHTIGER ENDUNG SPEICHERN
-            with open(temp_filename, "wb") as file: 
-                file.write(uploaded_file.getbuffer())
-            
+            with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
-                # DATEI MIT RICHTIGEM NAMEN AN OPENAI SENDEN
                 txt = audio_zu_text(temp_filename)
                 
                 preise = lade_preise_live()
-                dat = text_zu_daten(txt, preise)
+                kunden = lade_kunden_live() # Anrede wird hier mitgeladen
+                
+                dat = text_zu_daten(txt, preise, kunden)
                 dat['rechnungs_nr'] = hole_nr()
                 
                 st.markdown("---")
                 c1, c2, c3 = st.columns(3)
                 c1.metric("Kunde", dat.get('kunde_name')); c2.metric("Nr.", dat.get('rechnungs_nr')); c3.metric("Brutto", f"{dat.get('summe_brutto'):.2f} €")
+                
+                if dat.get('kundennummer'):
+                    st.success(f"✅ Stammkunde: {dat.get('anrede')} {dat.get('kunde_name')}")
                 
                 pdf = erstelle_bericht_pdf(dat)
                 csv = baue_datev_datei(dat)
@@ -286,19 +342,14 @@ if uploaded_file and api_key and client:
                     if sende_mail(pdf, dat): st.toast("📧 Mail raus")
             except Exception as e: st.error(f"Fehler: {e}")
             
-    # ------------------------------------------------
-    # MODUS 2: AUFTRAG ANNEHMEN
-    # ------------------------------------------------
-    else:
+    else: 
         with st.spinner("⏳ Erfasse Auftrag..."):
-            
-            # AUCH HIER: DATEI MIT RICHTIGER ENDUNG SPEICHERN
-            with open(temp_filename, "wb") as file: 
-                file.write(uploaded_file.getbuffer())
-                
+            with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
                 txt = audio_zu_text(temp_filename)
-                auf = text_zu_auftrag(txt)
+                kunden = lade_kunden_live()
+                auf = text_zu_auftrag(txt, kunden)
+                
                 st.success(f"Auftrag von {auf.get('kunde_name')}")
                 st.json(auf)
                 if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
