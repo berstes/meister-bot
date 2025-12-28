@@ -106,7 +106,7 @@ def text_zu_daten(rohtext, preisliste_text):
     response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_befehl}, {"role": "user", "content": rohtext}], response_format={"type": "json_object"})
     return json.loads(response.choices[0].message.content)
 
-# --- 4. PDF ---
+# --- 4. PDF & DATEV ---
 
 class PDF(FPDF):
     def header(self):
@@ -134,7 +134,7 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font("Arial", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # 2. Titel & Datum & Betreff (NEU)
+    # 2. Titel & Datum & Betreff
     pdf.ln(15) 
     
     # Zeile 1: Die Nummer
@@ -177,29 +177,6 @@ def erstelle_bericht_pdf(daten):
         pdf.cell(30, 8, gesamt, 1, 1, 'R')
         i += 1
     
-    # --- 6. DATEV EXPORT ---
-
-    def erstelle_datev_csv(daten):
-    # DATEV Format Spezifikationen
-    umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
-    datum = datetime.now().strftime("%d%m")
-    
-    # Rechnungsnummer aus den Daten nehmen
-    rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
-    
-    # Buchungstext vorbereiten (Sonderzeichen raus)
-    raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
-    buchungstext = raw_text.replace(";", " ")[:60]
-    
-    # Header für DATEV
-    header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
-    
-    # Die Buchungszeile
-    # Standard: Konto 8400 (Erlöse 19%), Gegenkonto 1410 (Forderungen)
-    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
-    
-    return f"{header}\n{line}"
-    
     # 7. Summenblock
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
@@ -226,158 +203,27 @@ def erstelle_bericht_pdf(daten):
     pdf.output(dateiname)
     return dateiname
 
-
-# --- 5. SPEICHERN & SENDEN (FIX FÜR IPHONE) ---
-
-def speichere_in_google_sheets(daten):
-    try:
-        if not google_creds: return False
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name); worksheet = sh.get_worksheet(0)
-        
-        # Header anpassen: Rechnungs-Nr kommt nach vorne
-        if not worksheet.get_all_values(): 
-            worksheet.append_row(["Rechnungs-Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
-        
-        # Hier nutzen wir die Nummer, die wir vorher generiert und in 'daten' gespeichert haben
-        rechnungs_nr = daten.get('rechnungs_nr', '')
-        
-        neue_zeile = [
-            rechnungs_nr,
-            datetime.now().strftime("%d.%m.%Y"), 
-            daten.get('kunde_name'), 
-            daten.get('problem_titel'), 
-            str(daten.get('summe_netto')).replace('.', ','), 
-            str(daten.get('mwst_betrag')).replace('.', ','), 
-            str(daten.get('summe_brutto')).replace('.', ',')
-        ]
-        worksheet.append_row(neue_zeile)
-        return True
-    except: return False
-
-def sende_email_mit_pdf(pdf_pfad, daten):
-    try:
-        msg = MIMEMultipart()
-        msg['From'] = email_sender
-        msg['To'] = email_receiver
-        msg['Subject'] = f"Bericht: {daten.get('kunde_name')}"
-        msg.attach(MIMEText('Neuer Arbeitsbericht anbei.', 'plain'))
-
-        with open(pdf_pfad, "rb") as f:
-            # HIER IST DER FIX FÜR APPLE MAIL: "application/pdf"
-            p = MIMEBase("application", "pdf") 
-            p.set_payload(f.read())
-            encoders.encode_base64(p)
-            # Dateiname in Anführungszeichen setzen!
-            filename = os.path.basename(pdf_pfad)
-            p.add_header("Content-Disposition", f'attachment; filename="{filename}"')
-            msg.attach(p)
-
-        if int(smtp_port) == 465: s = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
-        else: s = smtplib.SMTP(smtp_server, int(smtp_port)); s.starttls()
-        s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
-    except Exception as e:
-        print(f"Mail Fehler: {e}")
-        return False
-
-def hole_neue_rechnungsnummer():
-    # Standard-Startnummer für das neue Jahr (Jahr + 3 Ziffern)
-    start_nummer = 2025001
+# --- HIER IST DIE FUNKTION JETZT RICHTIG (GANZ LINKS BÜNDIG) ---
+def erstelle_datev_csv(daten):
+    # DATEV Format Spezifikationen
+    umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
+    datum = datetime.now().strftime("%d%m")
     
-    if not google_creds: 
-        return str(start_nummer) # Fallback ohne Cloud
+    # Rechnungsnummer aus den Daten nehmen
+    rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
     
-    try:
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        worksheet = sh.get_worksheet(0)
-        
-        # Wir nehmen an, die Nummer steht in Spalte A (Index 1)
-        spalte_a = worksheet.col_values(1)
-        
-        if not spalte_a:
-            return str(start_nummer)
-            
-        letzter_wert = spalte_a[-1]
-        
-        # Prüfen, ob der letzte Wert eine Zahl ist (Header "Rechnungs-Nr" überspringen)
-        if letzter_wert.isdigit():
-            neue_nummer = int(letzter_wert) + 1
-            return str(neue_nummer)
-        else:
-            # Falls da "Datum" oder Text steht, fangen wir neu an
-            return str(start_nummer)
-    except Exception as e:
-        print(f"Fehler bei Nummerierung: {e}")
-        return str(start_nummer)
+    # Buchungstext vorbereiten (Sonderzeichen raus)
+    raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
+    buchungstext = raw_text.replace(";", " ")[:60]
+    
+    # Header für DATEV
+    header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
+    
+    # Die Buchungszeile
+    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
+    
+    return f"{header}\n{line}"
 
-
-# --- APP START ---
-st.title("📝 MeisterBot")
-st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
-
-uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
-
-if uploaded_file and api_key:
-    preise_text = lade_preise_live()
-
-    with st.spinner("⏳ Analysiere Audio & Berechne..."):
-        # Temporäre Datei speichern
-        with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f: 
-            f.write(uploaded_file.getbuffer())
-        
-        try:
-            # 1. KI-Analyse
-            transkript = audio_zu_text(f.name)
-            daten = text_zu_daten(transkript, preise_text)
-            
-            # 2. Nummer holen (WICHTIG: Damit 'ENTWURF' weggeht)
-            daten['rechnungs_nr'] = hole_neue_rechnungsnummer()
-
-            st.markdown("---")
-            
-            # 3. Anzeige
-            c_info1, c_info2, c_info3 = st.columns(3)
-            c_info1.metric("Kunde", daten.get('kunde_name', 'Unbekannt'))
-            c_info2.metric("Nr.", daten.get('rechnungs_nr'))
-            c_info3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
-            
-            # 4. PDF & CSV erstellen
-            pdf_datei = erstelle_bericht_pdf(daten)
-            datev_csv_content = erstelle_datev_csv(daten)
-            
-            # 5. Speichern
-            if speichere_in_google_sheets(daten): st.toast("✅ In Google Sheets gespeichert")
-            else: st.toast("⚠️ Fehler beim Speichern (Google)")
-                
-            if email_sender: 
-                if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail versendet")
-            
-            # 6. DOWNLOADS (Hier war der Fehler!)
-            st.markdown("### 📥 Downloads")
-            
-            # HIER definieren wir die Spalten c_dl1 und c_dl2:
-            c_dl1, c_dl2 = st.columns(2)
-            
-            # Button 1: PDF
-            with open(pdf_datei, "rb") as f:
-                c_dl1.download_button(
-                    label="📄 Arbeitsbericht PDF",
-                    data=f,
-                    file_name=f"Arbeitsbericht_{daten.get('rechnungs_nr')}.pdf",
-                    mime="application/pdf",
-                )
-            
-            # Button 2: DATEV
-            c_dl2.download_button(
-                label="📊 DATEV Export (CSV)",
-                data=datev_csv_content,
-                file_name=f"DATEV_Buchung_{daten.get('rechnungs_nr')}.csv",
-                mime="text/csv",
-            )
-                
-        except Exception as e:
-            st.error(f"Ein Fehler ist aufgetreten: {e}")
 
 
 
