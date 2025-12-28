@@ -2,32 +2,32 @@ import streamlit as st
 import os
 import json
 import time
-import pandas as pd
-import gspread
 import smtplib
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
-from email.mime.base import MIMEBase
-from email import encoders
 from datetime import datetime
-from openai import OpenAI
-from fpdf import FPDF
 
-# --- 1. KONFIGURATION ---
-# Titel im Browser-Tab
+# --- 1. SICHERHEITS-START (IMPORTS) ---
+# Wir importieren alles Wichtige zuerst, damit nichts fehlt
+try:
+    import pandas as pd
+    import gspread
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+    from email.mime.base import MIMEBase
+    from email import encoders
+    from openai import OpenAI
+    from fpdf import FPDF
+except ImportError as e:
+    st.error(f"Fehler beim Laden der Module: {e}")
+    st.stop()
+
+# --- 2. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot", page_icon="📝")
 
-# --- HELFER & DATEV ---
-def baue_datev_datei(daten):
-    umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
-    datum = datetime.now().strftime("%d%m")
-    rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
-    raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
-    buchungstext = raw_text.replace(";", " ")[:60]
-    header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
-    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
-    return f"{header}\n{line}"
+# Globale Variablen sicher definieren (verhindert NameError)
+client = None
+api_key = None
 
+# --- HELFER-FUNKTIONEN ---
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -38,388 +38,244 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 2. PDF KLASSE ---
-class PDF(FPDF):
-    def header(self):
-        pass # Manuell gesteuert
+# --- 3. SEITENLEISTE (EINGABEN) ---
+with st.sidebar:
+    st.header("⚙️ Einstellungen")
     
+    # Der Reset-Knopf (damit du ihn immer hast)
+    if st.button("🔄 App neu laden (Reset)"):
+        st.cache_data.clear()
+        st.rerun()
+    st.markdown("---")
+    
+    # Modus Auswahl
+    modus = st.radio("Modus wählen:", ("Rechnung schreiben", "Auftrag annehmen"), index=0)
+    st.markdown("---")
+    
+    # API Keys laden
+    api_key_default = st.secrets.get("openai_api_key", "")
+    if api_key_default: 
+        st.success("✅ KI-System bereit")
+        api_key = api_key_default
+    else: 
+        st.error("❌ KI-Key fehlt")
+        api_key = st.text_input("OpenAI Key", type="password")
+    
+    google_json_raw = st.secrets.get("google_json", "")
+    google_creds = clean_json_string(google_json_raw)
+    
+    if google_creds: st.success("☁️ Cloud Speicher aktiv")
+    else: st.error("❌ Google Key Fehler")
+        
+    blatt_name = st.text_input("Dateiname", value="Auftragsbuch")
+    
+    # Email Settings
+    email_sender_default = st.secrets.get("email_sender", "")
+    email_password_default = st.secrets.get("email_password", "")
+    smtp_server = st.secrets.get("smtp_server", "smtp.ionos.de")
+    smtp_port = st.secrets.get("smtp_port", 465)
+    
+    if email_sender_default: st.success("📧 E-Mail aktiv")
+    else: st.info("E-Mail manuell:") 
+    email_sender = email_sender_default or st.text_input("E-Mail")
+    email_password = email_password_default or st.text_input("Passwort", type="password")
+    email_receiver = st.text_input("Empfänger (Büro/DATEV)", value=email_sender)
+
+# --- 4. KI CLIENT STARTEN ---
+# Wir machen das HIER, nachdem api_key sicher definiert wurde
+if api_key:
+    try:
+        client = OpenAI(api_key=api_key)
+    except Exception as e:
+        st.error(f"Fehler beim Starten der KI: {e}")
+
+# --- 5. LOGIK-FUNKTIONEN ---
+
+def baue_datev_datei(daten):
+    umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
+    datum = datetime.now().strftime("%d%m")
+    rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
+    raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
+    buchungstext = raw_text.replace(";", " ")[:60]
+    header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
+    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
+    return f"{header}\n{line}"
+
+class PDF(FPDF):
+    def header(self): pass
     def footer(self):
-        self.set_y(-30)
-        self.set_font('Helvetica', 'I', 8)
-        self.set_text_color(128)
+        self.set_y(-30); self.set_font('Helvetica', 'I', 8); self.set_text_color(128)
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
-# --- 3. BERICHT ERSTELLEN ---
 def erstelle_bericht_pdf(daten):
-    pdf = PDF()
-    pdf.add_page()
-    
+    pdf = PDF(); pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # --- KOPFBEREICH (Fixiert) ---
+    # KOPF
     pdf.set_text_color(0, 0, 0)
-    
-    # 1. Logo
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
 
-    # 2. Adresse (Manuell positioniert)
-    pdf.set_font('Helvetica', 'B', 16)
-    pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
-    
+    pdf.set_font('Helvetica', 'B', 16); pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
     pdf.set_font('Helvetica', '', 10)
     pdf.set_xy(10, 18); pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
     pdf.set_xy(10, 23); pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
     pdf.set_xy(10, 28); pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
     pdf.set_xy(10, 33); pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
-
-    # Linie
-    pdf.set_draw_color(0, 0, 0)
-    pdf.line(10, 42, 200, 42)
+    pdf.set_draw_color(0, 0, 0); pdf.line(10, 42, 200, 42)
     
-    # --- INHALT ---
+    # INHALT
     pdf.set_y(55)
+    pdf.set_font("Helvetica", 'B', 12); pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), ln=1)
+    pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # Kunde
-    pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), ln=1)
-    pdf.set_font("Helvetica", '', 12)
-    pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
-    
-    # Titel
-    pdf.ln(10) 
-    pdf.set_font("Helvetica", 'B', 20)
+    pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
-    # Datum
     pdf.set_font("Helvetica", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
     pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), ln=1)
     pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), ln=1)
     pdf.ln(10)
     
-    # Tabelle
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Helvetica", 'B', 10)
-    pdf.cell(10, 8, "#", 1, 0, 'C', 1)
-    pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
-    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1)
-    pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
+    pdf.set_fill_color(240, 240, 240); pdf.set_font("Helvetica", 'B', 10)
+    pdf.cell(10, 8, "#", 1, 0, 'C', 1); pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
+    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1); pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
     pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
-    # Positionen
-    pdf.set_font("Helvetica", '', 10)
-    i = 1
+    pdf.set_font("Helvetica", '', 10); i = 1
     for pos in daten.get('positionen', []):
-        text = txt(pos.get('text', ''))
-        menge = str(pos.get('menge', ''))
-        einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ',')
-        gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
-        pdf.cell(10, 8, str(i), 1, 0, 'C')
-        pdf.cell(90, 8, text, 1, 0, 'L')
-        pdf.cell(20, 8, menge, 1, 0, 'C')
-        pdf.cell(30, 8, einzel, 1, 0, 'R')
-        pdf.cell(30, 8, gesamt, 1, 1, 'R')
-        i += 1
+        text = txt(pos.get('text', '')); menge = str(pos.get('menge', ''))
+        einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ','); gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
+        pdf.cell(10, 8, str(i), 1, 0, 'C'); pdf.cell(90, 8, text, 1, 0, 'L'); pdf.cell(20, 8, menge, 1, 0, 'C')
+        pdf.cell(30, 8, einzel, 1, 0, 'R'); pdf.cell(30, 8, gesamt, 1, 1, 'R'); i += 1
     
-    # Summen
-    pdf.ln(5)
-    pdf.set_font("Helvetica", '', 11)
+    pdf.ln(5); pdf.set_font("Helvetica", '', 11)
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
-    
     pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R'); pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
     pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R'); pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
     pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    pdf.ln(10)
-    pdf.set_font("Helvetica", '', 10)
+    pdf.ln(10); pdf.set_font("Helvetica", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
     
-    timestamp = int(time.time())
-    dateiname = f"Bericht_{rechnungs_nr}_{timestamp}.pdf"
-    pdf.output(dateiname)
-    return dateiname
-
-# Secrets
-api_key_default = st.secrets.get("openai_api_key", "")
-email_sender_default = st.secrets.get("email_sender", "")
-email_password_default = st.secrets.get("email_password", "")
-smtp_server_default = st.secrets.get("smtp_server", "smtp.ionos.de")
-smtp_port_default = st.secrets.get("smtp_port", 465)
-google_json_raw = st.secrets.get("google_json", "")
-
-# --- SEITENLEISTE MIT MODUS-WAHL ---
-with st.sidebar:
-    st.header("⚙️ Einstellungen")
-
-    # In der Sidebar einfügen:
-if st.sidebar.button("🔄 App neu laden / Reset"):
-    st.cache_data.clear()
-    st.rerun()
-    
-    modus = st.radio(
-        "Modus wählen:",
-        ("Rechnung schreiben", "Auftrag annehmen"),
-        index=0
-    )
-    st.markdown("---")
-    
-    if api_key_default: st.success("✅ KI-System bereit")
-    else: st.error("❌ KI-Key fehlt")
-    api_key = api_key_default or st.text_input("OpenAI Key", type="password")
-    
-    google_creds = clean_json_string(google_json_raw)
-    if google_creds: st.success("☁️ Cloud Speicher aktiv")
-    else: st.error("❌ Google Key Fehler")
-        
-    blatt_name = st.text_input("Dateiname", value="Auftragsbuch")
-    
-    if email_sender_default: st.success("📧 E-Mail aktiv")
-    else: st.info("E-Mail manuell:") 
-    email_sender = email_sender_default or st.text_input("E-Mail")
-    email_password = email_password_default or st.text_input("Passwort", type="password")
-    smtp_server = smtp_server_default or st.text_input("SMTP Server", value="smtp.ionos.de")
-    smtp_port = smtp_port_default or st.number_input("SMTP Port", value=465)
-    email_receiver = st.text_input("Empfänger (Büro/DATEV)", value=email_sender)
-
-client = None
-if api_key: client = OpenAI(api_key=api_key)
-
-# --- FUNKTIONEN FÜR BEIDE MODI ---
+    ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
+    pdf.output(dateiname); return dateiname
 
 def lade_preise_live():
-    fallback_text = "PREISLISTE (Fallback): - Anfahrt: 22 EUR - Arbeitszeit: 77 EUR"
-    if not google_creds: return fallback_text
+    if not google_creds: return "Preise: Standard"
     try:
         gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        try: ws = sh.worksheet("Preisliste")
-        except: return fallback_text
-        alle_daten = ws.get_all_values()
-        if len(alle_daten) < 2: return fallback_text
-        live_text = "AKTUELLE PREISLISTE (Live):\n"
-        for zeile in alle_daten[1:]:
-            if len(zeile) >= 2:
-                artikel = zeile[0]
-                preis = zeile[1].replace('€', '').replace('EUR', '').strip()
-                if artikel and preis:
-                    live_text += f"- {artikel}: {preis} EUR\n"
-        return live_text
-    except: return fallback_text
+        sh = gc.open(blatt_name); ws = sh.worksheet("Preisliste")
+        alle = ws.get_all_values(); txt = "PREISLISTE:\n"
+        for z in alle[1:]:
+            if len(z)>=2: txt += f"- {z[0]}: {z[1]} EUR\n"
+        return txt
+    except: return "Preise: Standard"
 
-def audio_zu_text(dateipfad):
-    audio_file = open(dateipfad, "rb")
-    return client.audio.transcriptions.create(model="whisper-1", file=audio_file, response_format="text")
+def audio_zu_text(pfad):
+    f = open(pfad, "rb")
+    return client.audio.transcriptions.create(model="whisper-1", file=f, response_format="text")
 
-# --- KI: RECHNUNG ---
-def text_zu_daten(rohtext, preisliste_text):
-    system_befehl = f"""
-    Du bist ein Buchhalter für Handwerker (Interwark).
-    {preisliste_text}
-    Aufgabe:
-    1. Analysiere den Text. Suche passende Artikel aus der Preisliste.
-    2. Wenn ein Artikel genannt wird, nutze EXAKT den Preis aus der Liste.
-    3. Berechne Netto, 19% MwSt und Brutto.
-    Gib JSON zurück:
-    {{
-      "kunde_name": "Name",
-      "adresse": "Adresse",
-      "problem_titel": "Betreff",
-      "positionen": [ {{ "text": "Leistung", "menge": 1.0, "einzel_netto": 0.00, "gesamt_netto": 0.00 }} ],
-      "summe_netto": 0.00, "mwst_betrag": 0.00, "summe_brutto": 0.00
-    }}
-    """
-    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_befehl}, {"role": "user", "content": rohtext}], response_format={"type": "json_object"})
-    return json.loads(response.choices[0].message.content)
+def text_zu_daten(txt, preise):
+    sys = f"Du bist Buchhalter. {preise}. Gib JSON: {{'kunde_name': 'Name', 'adresse': 'Adr', 'problem_titel': 'Titel', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}"
+    res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
+    return json.loads(res.choices[0].message.content)
 
-# --- KI: NEUER AUFTRAG (SEKRETÄR) ---
-def text_zu_auftrag(rohtext):
-    system_befehl = """
-    Du bist ein Sekretär für einen Handwerker.
-    Analysiere den Anruf/Text und extrahiere die Auftragsdaten.
-    Wenn keine Adresse genannt wurde, schreibe 'Adresse erfragen'.
-    Gib JSON zurück:
-    {
-      "kunde_name": "Name",
-      "adresse": "Adresse",
-      "kontakt": "Telefonnummer oder Mail",
-      "problem": "Was ist kaputt / Was muss getan werden",
-      "termin": "Wunschtermin oder Dringlichkeit (z.B. Sofort, Montag, Egal)"
-    }
-    """
-    response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "system", "content": system_befehl}, {"role": "user", "content": rohtext}], response_format={"type": "json_object"})
-    return json.loads(response.choices[0].message.content)
+def text_zu_auftrag(txt):
+    sys = "Du bist Sekretär. Extrahiere JSON: {'kunde_name':'Name', 'adresse':'Adr', 'kontakt':'Tel', 'problem':'Prob', 'termin':'Wann'}"
+    res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
+    return json.loads(res.choices[0].message.content)
 
-
-def hole_neue_rechnungsnummer():
-    start_nummer = 2025001
-    if not google_creds: return str(start_nummer)
+def hole_nr():
+    if not google_creds: return "2025001"
     try:
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        worksheet = sh.get_worksheet(0)
-        spalte_a = worksheet.col_values(1)
-        if not spalte_a: return str(start_nummer)
-        letzter_wert = spalte_a[-1]
-        if letzter_wert.isdigit():
-            neue_nummer = int(letzter_wert) + 1
-            return str(neue_nummer)
-        else: return str(start_nummer)
-    except Exception as e:
-        print(f"Fehler bei Nummerierung: {e}")
-        return str(start_nummer)
+        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
+        col = ws.col_values(1); last = col[-1] if col else "0"
+        return str(int(last)+1) if last.isdigit() else "2025001"
+    except: return "2025001"
 
-# --- SPEICHERN: RECHNUNG ---
-def speichere_rechnung(daten):
+def speichere_rechnung(d):
+    if not google_creds: return False
     try:
-        if not google_creds: return False
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        worksheet = sh.get_worksheet(0) 
-        if not worksheet.get_all_values(): 
-            worksheet.append_row(["Rechnungs-Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
-        rechnungs_nr = daten.get('rechnungs_nr', '')
-        neue_zeile = [
-            rechnungs_nr,
-            datetime.now().strftime("%d.%m.%Y"), 
-            daten.get('kunde_name'), 
-            daten.get('problem_titel'), 
-            str(daten.get('summe_netto')).replace('.', ','), 
-            str(daten.get('mwst_betrag')).replace('.', ','), 
-            str(daten.get('summe_brutto')).replace('.', ',')
-        ]
-        worksheet.append_row(neue_zeile)
+        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
+        if not ws.get_all_values(): ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
+        ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',',')])
         return True
     except: return False
 
-# --- SPEICHERN: AUFTRAG (NEU) ---
-def speichere_auftrag(daten):
+def speichere_auftrag(d):
+    if not google_creds: return False
     try:
-        if not google_creds: return False
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        
-        try:
-            worksheet = sh.worksheet("Offene Aufträge")
-        except:
-            worksheet = sh.add_worksheet(title="Offene Aufträge", rows=100, cols=10)
-            
-        if not worksheet.get_all_values(): 
-            worksheet.append_row(["Eingang", "Kunde", "Adresse", "Kontakt", "Problem", "Terminwunsch"])
-            
-        neue_zeile = [
-            datetime.now().strftime("%d.%m.%Y %H:%M"), 
-            daten.get('kunde_name'), 
-            daten.get('adresse'), 
-            daten.get('kontakt'), 
-            daten.get('problem'), 
-            daten.get('termin')
-        ]
-        worksheet.append_row(neue_zeile)
+        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name)
+        try: ws = sh.worksheet("Offene Aufträge")
+        except: ws = sh.add_worksheet("Offene Aufträge", 100, 10)
+        if not ws.get_all_values(): ws.append_row(["Datum", "Kunde", "Adresse", "Kontakt", "Problem", "Termin"])
+        ws.append_row([datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('adresse'), d.get('kontakt'), d.get('problem'), d.get('termin')])
         return True
     except: return False
 
-
-def sende_email_mit_pdf(pdf_pfad, daten):
+def sende_mail(pfad, d):
     try:
-        msg = MIMEMultipart()
-        msg['From'] = email_sender
-        msg['To'] = email_receiver
-        msg['Subject'] = f"Bericht: {daten.get('kunde_name')}"
-        msg.attach(MIMEText('Neuer Arbeitsbericht anbei.', 'plain'))
-        with open(pdf_pfad, "rb") as f:
-            p = MIMEBase("application", "pdf") 
-            p.set_payload(f.read())
-            encoders.encode_base64(p)
-            filename = os.path.basename(pdf_pfad)
-            p.add_header("Content-Disposition", f'attachment; filename="{filename}"')
+        msg = MIMEMultipart(); msg['From']=email_sender; msg['To']=email_receiver; msg['Subject']=f"Bericht: {d.get('kunde_name')}"
+        with open(pfad, "rb") as f:
+            p = MIMEBase("application", "pdf"); p.set_payload(f.read()); encoders.encode_base64(p)
+            p.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(pfad)}"')
             msg.attach(p)
-        if int(smtp_port) == 465: s = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
-        else: s = smtplib.SMTP(smtp_server, int(smtp_port)); s.starttls()
+        s = smtplib.SMTP_SSL(smtp_server, int(smtp_port)) if int(smtp_port)==465 else smtplib.SMTP(smtp_server, int(smtp_port))
+        if int(smtp_port)!=465: s.starttls()
         s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
-    except Exception as e:
-        print(f"Mail Fehler: {e}")
-        return False
+    except: return False
 
-# --- APP START ---
-st.title("📝 MeisterBot") # Hier steht jetzt wieder der richtige Titel!
+# --- HAUPTPROGRAMM ---
+st.title("📝 MeisterBot")
 
-# Je nach Modus anderer Untertitel
 if modus == "Rechnung schreiben":
     st.caption("Modus: 🔵 Rechnung & PDF erstellen")
 else:
-    st.caption("Modus: 🟠 Neuen Auftrag anlegen (Keine Rechnung)")
+    st.caption("Modus: 🟠 Neuen Auftrag anlegen")
 
-uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
+f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
 
-if uploaded_file and api_key:
-    
-    # ------------------------------------------------
-    # MODUS 1: RECHNUNG SCHREIBEN
-    # ------------------------------------------------
+if f and api_key and client:
     if modus == "Rechnung schreiben":
-        preise_text = lade_preise_live()
-        
-        with st.spinner("⏳ Erstelle Rechnung/Bericht..."):
-            with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f: 
-                f.write(uploaded_file.getbuffer())
-            
+        with st.spinner("⏳ Erstelle Rechnung..."):
+            with open("temp_audio", "wb") as file: file.write(f.getbuffer())
             try:
-                transkript = audio_zu_text(f.name)
-                daten = text_zu_daten(transkript, preise_text)
-                daten['rechnungs_nr'] = hole_neue_rechnungsnummer()
-
+                txt = audio_zu_text("temp_audio")
+                preise = lade_preise_live()
+                dat = text_zu_daten(txt, preise)
+                dat['rechnungs_nr'] = hole_nr()
+                
                 st.markdown("---")
                 c1, c2, c3 = st.columns(3)
-                c1.metric("Kunde", daten.get('kunde_name'))
-                c2.metric("Nr.", daten.get('rechnungs_nr'))
-                c3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
+                c1.metric("Kunde", dat.get('kunde_name')); c2.metric("Nr.", dat.get('rechnungs_nr')); c3.metric("Brutto", f"{dat.get('summe_brutto'):.2f} €")
                 
-                pdf_datei = erstelle_bericht_pdf(daten)
-                datev_csv_content = baue_datev_datei(daten)
+                pdf = erstelle_bericht_pdf(dat)
+                csv = baue_datev_datei(dat)
                 
-                if speichere_rechnung(daten): st.toast("✅ Gespeichert (Rechnungen)")
+                if speichere_rechnung(dat): st.toast("✅ Gespeichert")
                 
-                # Downloads
                 st.markdown("### 📥 Downloads")
-                c_dl1, c_dl2 = st.columns(2)
-                with open(pdf_datei, "rb") as f:
-                    c_dl1.download_button("📄 PDF Bericht", f, pdf_datei, "application/pdf")
-                c_dl2.download_button("📊 DATEV CSV", datev_csv_content, f"DATEV_{daten.get('rechnungs_nr')}.csv", "text/csv")
+                c_a, c_b = st.columns(2)
+                with open(pdf, "rb") as file: c_a.download_button("📄 PDF", file, pdf, "application/pdf")
+                c_b.download_button("📊 DATEV", csv, f"DATEV_{dat.get('rechnungs_nr')}.csv", "text/csv")
                 
                 if email_sender: 
-                    if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail versendet")
-
-            except Exception as e:
-                st.error(f"Fehler: {e}")
-
-    # ------------------------------------------------
-    # MODUS 2: AUFTRAG ANNEHMEN (SEKRETÄR)
-    # ------------------------------------------------
-    else:
-        with st.spinner("⏳ Lege neuen Auftrag an..."):
-            with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f: 
-                f.write(uploaded_file.getbuffer())
-                
+                    if sende_mail(pdf, dat): st.toast("📧 Mail raus")
+            except Exception as e: st.error(f"Fehler: {e}")
+            
+    else: # AUFTRAGS MODUS
+        with st.spinner("⏳ Erfasse Auftrag..."):
+            with open("temp_audio", "wb") as file: file.write(f.getbuffer())
             try:
-                transkript = audio_zu_text(f.name)
-                auftrags_daten = text_zu_auftrag(transkript)
-                
-                st.markdown("---")
-                st.success(f"Auftrag von **{auftrags_daten.get('kunde_name')}** erkannt.")
-                
-                st.json(auftrags_daten)
-                
-                if speichere_auftrag(auftrags_daten):
-                    st.toast("✅ Auftrag gespeichert!")
-                    st.info("Der Auftrag wurde im Tabellenblatt 'Offene Aufträge' abgelegt.")
-                else:
-                    st.error("Fehler beim Speichern in Google Sheets.")
-                    
-            except Exception as e:
-                st.error(f"Fehler: {e}")
-
+                txt = audio_zu_text("temp_audio")
+                auf = text_zu_auftrag(txt)
+                st.success(f"Auftrag von {auf.get('kunde_name')}")
+                st.json(auf)
+                if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
+            except Exception as e: st.error(f"Fehler: {e}")
