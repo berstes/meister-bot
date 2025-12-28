@@ -13,8 +13,30 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-st.set_page_config(page_title="KI(IW)_bot", page_icon="📝")
+st.set_page_config(page_title="MeisterBot", page_icon="📝")
 
+# --- HIER SIND JETZT ALLE FUNKTIONEN (GANZ OBEN) ---
+
+# 1. DATEV FUNKTION (Umbennant zur Sicherheit)
+def baue_datev_datei(daten):
+    # DATEV Format Spezifikationen
+    umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
+    datum = datetime.now().strftime("%d%m")
+    
+    # Rechnungsnummer
+    rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
+    
+    # Buchungstext
+    raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
+    buchungstext = raw_text.replace(";", " ")[:60]
+    
+    # Header & Zeile
+    header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
+    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
+    
+    return f"{header}\n{line}"
+
+# 2. Hilfsfunktionen
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -24,6 +46,89 @@ def clean_json_string(s):
     fixed = s.replace('\n', '\\n').replace('\r', '')
     try: return json.loads(fixed)
     except: return None
+
+# 3. PDF Generator
+class PDF(FPDF):
+    def header(self):
+        if os.path.exists("logo.png"): self.image("logo.png", 160, 8, 20)
+        elif os.path.exists("logo.jpg"): self.image("logo.jpg", 160, 8, 20)
+        self.set_font('Arial', 'B', 15)
+        self.cell(80, 10, 'INTERWARK', 0, 1, 'L')
+        self.set_font('Arial', '', 10)
+        self.cell(80, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
+        self.set_draw_color(200,200,200); self.line(10, 35, 200, 35); self.ln(20)
+    def footer(self):
+        self.set_y(-30); self.set_font('Arial', 'I', 8); self.set_text_color(128)
+        self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
+
+def erstelle_bericht_pdf(daten):
+    pdf = PDF()
+    pdf.add_page()
+    def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
+    
+    # Kopfdaten
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
+    pdf.set_font("Arial", '', 12)
+    pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
+    
+    # Titel Block
+    pdf.ln(15) 
+    pdf.set_font("Arial", 'B', 20)
+    rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
+    pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), 0, 1)
+    
+    pdf.set_font("Arial", '', 10)
+    datum_heute = datetime.now().strftime('%d.%m.%Y')
+    pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), 0, 1)
+    pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), 0, 1)
+    pdf.ln(10)
+    
+    # Tabelle
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font("Arial", 'B', 10)
+    pdf.cell(10, 8, "#", 1, 0, 'C', 1)
+    pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
+    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1)
+    pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
+    pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
+    
+    pdf.set_font("Arial", '', 10)
+    i = 1
+    for pos in daten.get('positionen', []):
+        text = txt(pos.get('text', ''))
+        menge = str(pos.get('menge', ''))
+        einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ',')
+        gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
+        pdf.cell(10, 8, str(i), 1, 0, 'C')
+        pdf.cell(90, 8, text, 1, 0, 'L')
+        pdf.cell(20, 8, menge, 1, 0, 'C')
+        pdf.cell(30, 8, einzel, 1, 0, 'R')
+        pdf.cell(30, 8, gesamt, 1, 1, 'R')
+        i += 1
+    
+    # Summen
+    netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
+    mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
+    brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
+    
+    pdf.ln(5)
+    pdf.set_font("Arial", '', 11)
+    pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R')
+    pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
+    pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R')
+    pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
+    pdf.set_font("Arial", 'B', 12)
+    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
+    pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
+    
+    pdf.ln(15)
+    pdf.set_font("Arial", '', 10)
+    pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
+    
+    dateiname = f"Arbeitsbericht_{rechnungs_nr}.pdf"
+    pdf.output(dateiname)
+    return dateiname
 
 # Secrets laden
 api_key_default = st.secrets.get("openai_api_key", "")
@@ -57,7 +162,7 @@ with st.sidebar:
 client = None
 if api_key: client = OpenAI(api_key=api_key)
 
-# --- 2. LIVE-PREISE ---
+# --- WEITERE FUNKTIONEN (KI & PREISE) ---
 
 def lade_preise_live():
     fallback_text = "PREISLISTE (Fallback): - Anfahrt: 22 EUR - Arbeitszeit: 77 EUR"
@@ -70,7 +175,6 @@ def lade_preise_live():
         alle_daten = ws.get_all_values()
         if len(alle_daten) < 2: return fallback_text
         live_text = "AKTUELLE PREISLISTE (Live):\n"
-        # Spalte A = Name, Spalte B = Preis (ab Zeile 2)
         for zeile in alle_daten[1:]:
             if len(zeile) >= 2:
                 artikel = zeile[0]
@@ -79,8 +183,6 @@ def lade_preise_live():
                     live_text += f"- {artikel}: {preis} EUR\n"
         return live_text
     except: return fallback_text
-
-# --- 3. KI & DATENVERARBEITUNG ---
 
 def audio_zu_text(dateipfad):
     audio_file = open(dateipfad, "rb")
@@ -107,171 +209,33 @@ def text_zu_daten(rohtext, preisliste_text):
     return json.loads(response.choices[0].message.content)
 
 def hole_neue_rechnungsnummer():
-    # Standard-Startnummer für das neue Jahr
     start_nummer = 2025001
-    
-    if not google_creds: 
-        return str(start_nummer) # Fallback ohne Cloud
-    
+    if not google_creds: return str(start_nummer)
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         worksheet = sh.get_worksheet(0)
-        
-        # Wir nehmen an, die Nummer steht in Spalte A (Index 1)
         spalte_a = worksheet.col_values(1)
-        
-        if not spalte_a:
-            return str(start_nummer)
-            
+        if not spalte_a: return str(start_nummer)
         letzter_wert = spalte_a[-1]
-        
-        # Prüfen, ob der letzte Wert eine Zahl ist (Header überspringen)
         if letzter_wert.isdigit():
             neue_nummer = int(letzter_wert) + 1
             return str(neue_nummer)
-        else:
-            # Falls da "Datum" oder Text steht, fangen wir neu an
-            return str(start_nummer)
+        else: return str(start_nummer)
     except Exception as e:
         print(f"Fehler bei Nummerierung: {e}")
         return str(start_nummer)
 
-# --- 4. PDF GENERATOR ---
-
-class PDF(FPDF):
-    def header(self):
-        if os.path.exists("logo.png"): self.image("logo.png", 160, 8, 20)
-        elif os.path.exists("logo.jpg"): self.image("logo.jpg", 160, 8, 20)
-        self.set_font('Arial', 'B', 15)
-        self.cell(80, 10, 'INTERWARK', 0, 1, 'L')
-        self.set_font('Arial', '', 10)
-        self.cell(80, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
-        self.set_draw_color(200,200,200); self.line(10, 35, 200, 35); self.ln(20)
-    def footer(self):
-        self.set_y(-30); self.set_font('Arial', 'I', 8); self.set_text_color(128)
-        self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
-
-def erstelle_bericht_pdf(daten):
-    pdf = PDF()
-    pdf.add_page()
-    
-    # Hilfsfunktion für Sonderzeichen
-    def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
-    
-    # 1. Empfänger
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
-    pdf.set_font("Arial", '', 12)
-    pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
-    
-    # 2. Titel & Datum & Betreff (NEU)
-    pdf.ln(15) 
-    
-    # Zeile 1: Die Nummer
-    pdf.set_font("Arial", 'B', 20)
-    rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
-    pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), 0, 1)
-    
-    # Zeile 2: Das Datum
-    pdf.set_font("Arial", '', 10)
-    datum_heute = datetime.now().strftime('%d.%m.%Y')
-    pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), 0, 1)
-    
-    # Zeile 3: Projekt/Betreff
-    pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), 0, 1)
-    
-    pdf.ln(10) # Abstand zur Tabelle
-    
-    # 4. Tabelle Header
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_font("Arial", 'B', 10)
-    pdf.cell(10, 8, "#", 1, 0, 'C', 1)
-    pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
-    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1)
-    pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
-    pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
-    
-    # 5. Positionen
-    pdf.set_font("Arial", '', 10)
-    i = 1
-    for pos in daten.get('positionen', []):
-        text = txt(pos.get('text', ''))
-        menge = str(pos.get('menge', ''))
-        einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ',')
-        gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
-        
-        pdf.cell(10, 8, str(i), 1, 0, 'C')
-        pdf.cell(90, 8, text, 1, 0, 'L')
-        pdf.cell(20, 8, menge, 1, 0, 'C')
-        pdf.cell(30, 8, einzel, 1, 0, 'R')
-        pdf.cell(30, 8, gesamt, 1, 1, 'R')
-        i += 1
-    
-    # 6. Summenblock
-    netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
-    mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
-    brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
-    
-    pdf.ln(5)
-    pdf.set_font("Arial", '', 11)
-    pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R')
-    pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
-    
-    pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R')
-    pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
-    
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
-    pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
-    
-    # 7. Abschluss-Text
-    pdf.ln(15)
-    pdf.set_font("Arial", '', 10)
-    pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
-    
-    dateiname = f"Arbeitsbericht_{rechnungs_nr}.pdf"
-    pdf.output(dateiname)
-    return dateiname
-
-# --- 5. DATEV EXPORT FUNKTION (Wichtig: Ausserhalb der PDF Funktion!) ---
-
-def erstelle_datev_csv(daten):
-    # DATEV Format Spezifikationen
-    umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
-    datum = datetime.now().strftime("%d%m")
-    
-    # Rechnungsnummer aus den Daten nehmen
-    rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
-    
-    # Buchungstext vorbereiten (Sonderzeichen raus)
-    raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
-    buchungstext = raw_text.replace(";", " ")[:60]
-    
-    # Header für DATEV
-    header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
-    
-    # Die Buchungszeile
-    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
-    
-    return f"{header}\n{line}"
-
-
-# --- 6. SPEICHERN & SENDEN ---
+# --- SPEICHERN & SENDEN ---
 
 def speichere_in_google_sheets(daten):
     try:
         if not google_creds: return False
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name); worksheet = sh.get_worksheet(0)
-        
-        # Header anpassen: Rechnungs-Nr kommt nach vorne
         if not worksheet.get_all_values(): 
             worksheet.append_row(["Rechnungs-Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
-        
-        # Hier nutzen wir die Nummer, die wir vorher generiert und in 'daten' gespeichert haben
         rechnungs_nr = daten.get('rechnungs_nr', '')
-        
         neue_zeile = [
             rechnungs_nr,
             datetime.now().strftime("%d.%m.%Y"), 
@@ -292,16 +256,13 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         msg['To'] = email_receiver
         msg['Subject'] = f"Bericht: {daten.get('kunde_name')}"
         msg.attach(MIMEText('Neuer Arbeitsbericht anbei.', 'plain'))
-
         with open(pdf_pfad, "rb") as f:
-            # FIX FÜR APPLE MAIL: "application/pdf"
             p = MIMEBase("application", "pdf") 
             p.set_payload(f.read())
             encoders.encode_base64(p)
             filename = os.path.basename(pdf_pfad)
             p.add_header("Content-Disposition", f'attachment; filename="{filename}"')
             msg.attach(p)
-
         if int(smtp_port) == 465: s = smtplib.SMTP_SSL(smtp_server, int(smtp_port))
         else: s = smtplib.SMTP(smtp_server, int(smtp_port)); s.starttls()
         s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
@@ -310,7 +271,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return False
 
 
-# --- 7. APP START (HAUPTPROGRAMM) ---
+# --- HAUPTPROGRAMM (APP START) ---
 st.title("📝 MeisterBot")
 st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
 
@@ -320,7 +281,6 @@ if uploaded_file and api_key:
     preise_text = lade_preise_live()
 
     with st.spinner("⏳ Analysiere Audio & Berechne..."):
-        # Temporäre Datei speichern
         with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f: 
             f.write(uploaded_file.getbuffer())
         
@@ -329,48 +289,34 @@ if uploaded_file and api_key:
             transkript = audio_zu_text(f.name)
             daten = text_zu_daten(transkript, preise_text)
             
-            # 2. Nummer holen (WICHTIG: Damit 'ENTWURF' weggeht)
+            # 2. Nummer holen
             daten['rechnungs_nr'] = hole_neue_rechnungsnummer()
 
             st.markdown("---")
-            
-            # 3. Anzeige
             c_info1, c_info2, c_info3 = st.columns(3)
             c_info1.metric("Kunde", daten.get('kunde_name', 'Unbekannt'))
             c_info2.metric("Nr.", daten.get('rechnungs_nr'))
             c_info3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
             
-            # 4. PDF & CSV erstellen
+            # 3. Dateien erstellen (HIER NEUER FUNKTIONS-NAME!)
             pdf_datei = erstelle_bericht_pdf(daten)
-            datev_csv_content = erstelle_datev_csv(daten)
+            datev_csv_content = baue_datev_datei(daten) # <--- Neuer Name benutzt!
             
-            # 5. Speichern
-            if speichere_in_google_sheets(daten): st.toast("✅ In Google Sheets gespeichert")
+            # 4. Speichern
+            if speichere_in_google_sheets(daten): st.toast("✅ Gespeichert")
             else: st.toast("⚠️ Fehler beim Speichern (Google)")
                 
             if email_sender: 
                 if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail versendet")
             
-            # 6. DOWNLOADS (Spalten hier definieren!)
+            # 5. Downloads
             st.markdown("### 📥 Downloads")
             c_dl1, c_dl2 = st.columns(2)
             
-            # Button 1: PDF
             with open(pdf_datei, "rb") as f:
-                c_dl1.download_button(
-                    label="📄 Arbeitsbericht PDF",
-                    data=f,
-                    file_name=f"Arbeitsbericht_{daten.get('rechnungs_nr')}.pdf",
-                    mime="application/pdf",
-                )
+                c_dl1.download_button("📄 PDF Bericht", f, f"Bericht_{daten.get('rechnungs_nr')}.pdf", "application/pdf")
             
-            # Button 2: DATEV
-            c_dl2.download_button(
-                label="📊 DATEV Export (CSV)",
-                data=datev_csv_content,
-                file_name=f"DATEV_Buchung_{daten.get('rechnungs_nr')}.csv",
-                mime="text/csv",
-            )
+            c_dl2.download_button("📊 DATEV CSV", datev_csv_content, f"DATEV_{daten.get('rechnungs_nr')}.csv", "text/csv")
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
