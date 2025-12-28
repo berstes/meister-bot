@@ -86,17 +86,14 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_kunden_live():
-    """Lädt Kunden: A=Name, B=Str, C=PLZ, D=Ort, E=KdNr, F=Anrede."""
     if not google_creds: return "Keine Cloud-Verbindung."
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         try: ws = sh.worksheet("Kunden")
         except: return "Hinweis: Tabellenblatt 'Kunden' fehlt."
-            
         alle_daten = ws.get_all_values()
         if len(alle_daten) < 2: return "Keine Kunden gespeichert."
-        
         kunden_text = "BEKANNTE KUNDEN:\n"
         for zeile in alle_daten[1:]:
             if len(zeile) >= 1:
@@ -105,9 +102,7 @@ def lade_kunden_live():
                 plz = zeile[2] if len(zeile) > 2 else ""
                 ort = zeile[3] if len(zeile) > 3 else ""
                 kd_nr = zeile[4] if len(zeile) > 4 else ""
-                anrede = zeile[5] if len(zeile) > 5 else "" # NEU: Spalte F
-                
-                # Wir bauen alles zusammen für die KI
+                anrede = zeile[5] if len(zeile) > 5 else "" 
                 kunden_text += f"- Name: {name} | Anrede: {anrede} | Adresse: {strasse}, {plz} {ort} | KdNr: {kd_nr}\n"
         return kunden_text
     except Exception as e:
@@ -133,22 +128,8 @@ def text_zu_daten(txt, preise, kunden_db):
     Du bist Buchhalter (Interwark).
     PREISE: {preise}
     KUNDEN-DB: {kunden_db}
-    
-    AUFGABE:
-    1. Suche Kunde in DB.
-    2. Wenn gefunden -> Nimm 'anrede', 'kunde_name', 'adresse', 'kundennummer' exakt aus der DB.
-    3. Wenn nicht -> Rate die Daten aus dem Text.
-    
-    JSON FORMAT:
-    {{
-      "anrede": "Herr/Frau/Firma",
-      "kunde_name": "Name",
-      "adresse": "Str, PLZ Ort",
-      "kundennummer": "1000",
-      "problem_titel": "Betreff",
-      "positionen": [ {{ "text": "Leistung", "menge": 1.0, "einzel_netto": 0.00, "gesamt_netto": 0.00 }} ],
-      "summe_netto": 0.00, "mwst_betrag": 0.00, "summe_brutto": 0.00
-    }}
+    AUFGABE: Suche Kunde. Erstelle JSON.
+    Format: {{'anrede': 'Herr/Frau', 'kunde_name': 'Name', 'adresse': 'Str, PLZ Ort', 'kundennummer': '1000', 'problem_titel': 'Betreff', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}
     """
     res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
     return json.loads(res.choices[0].message.content)
@@ -181,8 +162,12 @@ def baue_datev_datei(daten):
 class PDF(FPDF):
     def header(self): pass
     def footer(self):
-        self.set_y(-30); self.set_font('Helvetica', 'I', 8); self.set_text_color(128)
-        self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
+        # Footer etwas tiefer
+        self.set_y(-20)
+        self.set_font('Helvetica', 'I', 8)
+        self.set_text_color(128)
+        # Seitenzahl optional
+        self.cell(0, 4, f'Seite {self.page_no()}', 0, 1, 'R')
 
 def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
@@ -204,35 +189,27 @@ def erstelle_bericht_pdf(daten):
     # INHALT
     pdf.set_y(55)
     pdf.set_font("Helvetica", 'B', 12)
-    
-    # --- ADRESSFELD NEU MIT ANREDE ---
     anrede = daten.get('anrede', '')
-    name = daten.get('kunde_name', '')
+    if anrede and anrede != "None": pdf.cell(0, 5, txt(anrede), ln=1)
+    pdf.cell(0, 5, txt(daten.get('kunde_name')), ln=1)
     
-    # Wenn Anrede da ist, schreiben wir sie in die erste Zeile
-    if anrede and anrede != "None":
-        pdf.cell(0, 5, txt(anrede), ln=1)
-        
-    pdf.cell(0, 5, txt(name), ln=1)
-    
-    # Kundennummer (kleiner darunter)
     kd = daten.get('kundennummer', '')
     if kd: 
         pdf.set_font("Helvetica", '', 9)
         pdf.cell(0, 5, txt(f"Kundennr.: {kd}"), ln=1)
-        pdf.set_font("Helvetica", 'B', 12) # Zurück zu Fett
+        pdf.set_font("Helvetica", 'B', 12)
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # REST
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
-    pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
+    pdf.cell(0, 10, txt(f"Rechnung Nr. {rechnungs_nr}"), ln=1) # Hier steht jetzt RECHNUNG
     
     pdf.set_font("Helvetica", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
-    pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), ln=1)
-    pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), ln=1)
+    pdf.cell(0, 5, txt(f"Rechnungsdatum: {datum_heute}"), ln=1)
+    pdf.cell(0, 5, txt(f"Leistungszeitraum: {datum_heute}"), ln=1) # Wichtig für §14
+    pdf.cell(0, 5, txt(f"Betreff: {daten.get('problem_titel')}"), ln=1)
     pdf.ln(10)
     
     pdf.set_fill_color(240, 240, 240); pdf.set_font("Helvetica", 'B', 10)
@@ -254,12 +231,24 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R'); pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
     pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R'); pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
+    pdf.cell(150, 10, "Zahlbetrag:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
     pdf.ln(10); pdf.set_font("Helvetica", '', 10)
-    pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
+    pdf.multi_cell(0, 5, txt("Bitte überweisen Sie den Betrag sofort und ohne Abzug."))
     
-    ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
+    # --- FUSSTEXT MIT PFLICHTANGABEN NACH §14 UStG ---
+    pdf.ln(5)
+    pdf.set_font("Helvetica", '', 9)
+    # HIER MUSST DU DEINE DATEN EINTRAGEN!
+    # \n macht einen Zeilenumbruch
+    fuss_text = (
+        "Interwark Bernhard Stegemann-Klammt | Hohe Str. 26 | 26725 Emden\n"
+        "Steuernummer: 123/456/7890  |  USt-IdNr.: DE123456789\n" # <--- HIER ÄNDERN
+        "Bank: Sparkasse Emden  |  IBAN: DE00 0000 0000 0000 0000 00  |  BIC: XXXXXXXX" # <--- HIER ÄNDERN
+    )
+    pdf.multi_cell(0, 5, txt(fuss_text), 0, 'C')
+    
+    ts = int(time.time()); dateiname = f"Rechnung_{rechnungs_nr}_{ts}.pdf"
     pdf.output(dateiname); return dateiname
 
 def speichere_rechnung(d):
@@ -284,7 +273,7 @@ def speichere_auftrag(d):
 
 def sende_mail(pfad, d):
     try:
-        msg = MIMEMultipart(); msg['From']=email_sender; msg['To']=email_receiver; msg['Subject']=f"Bericht: {d.get('kunde_name')}"
+        msg = MIMEMultipart(); msg['From']=email_sender; msg['To']=email_receiver; msg['Subject']=f"Rechnung: {d.get('kunde_name')}"
         with open(pfad, "rb") as f:
             p = MIMEBase("application", "pdf"); p.set_payload(f.read()); encoders.encode_base64(p)
             p.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(pfad)}"')
@@ -314,10 +303,8 @@ if f and api_key and client:
             with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
                 txt = audio_zu_text(temp_filename)
-                
                 preise = lade_preise_live()
-                kunden = lade_kunden_live() # Anrede wird hier mitgeladen
-                
+                kunden = lade_kunden_live()
                 dat = text_zu_daten(txt, preise, kunden)
                 dat['rechnungs_nr'] = hole_nr()
                 
@@ -335,7 +322,7 @@ if f and api_key and client:
                 
                 st.markdown("### 📥 Downloads")
                 c_a, c_b = st.columns(2)
-                with open(pdf, "rb") as file: c_a.download_button("📄 PDF", file, pdf, "application/pdf")
+                with open(pdf, "rb") as file: c_a.download_button("📄 PDF Rechnung", file, pdf, "application/pdf")
                 c_b.download_button("📊 DATEV", csv, f"DATEV_{dat.get('rechnungs_nr')}.csv", "text/csv")
                 
                 if email_sender: 
@@ -349,7 +336,6 @@ if f and api_key and client:
                 txt = audio_zu_text(temp_filename)
                 kunden = lade_kunden_live()
                 auf = text_zu_auftrag(txt, kunden)
-                
                 st.success(f"Auftrag von {auf.get('kunde_name')}")
                 st.json(auf)
                 if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
