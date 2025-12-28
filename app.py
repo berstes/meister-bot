@@ -5,8 +5,19 @@ import time
 import smtplib
 from datetime import datetime
 
-# --- 1. SICHERHEITS-START (IMPORTS) ---
-# Wir importieren alles Wichtige zuerst, damit nichts fehlt
+# --- 1. SICHERHEITS-START: VARIABLEN VORDEFINIEREN ---
+# Das verhindert den "NameError", den du im Screenshot hattest
+api_key = None
+client = None
+email_sender = None
+email_receiver = None
+smtp_server = "smtp.ionos.de"
+smtp_port = 465
+email_password = None
+google_creds = None
+blatt_name = "Auftragsbuch"
+
+# Imports sicher laden
 try:
     import pandas as pd
     import gspread
@@ -17,17 +28,13 @@ try:
     from openai import OpenAI
     from fpdf import FPDF
 except ImportError as e:
-    st.error(f"Fehler beim Laden der Module: {e}")
+    st.error(f"Fehler beim Laden von Modulen: {e}")
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot", page_icon="📝")
+st.set_page_config(page_title="MeisterBot 3.0", page_icon="🚀")
 
-# Globale Variablen sicher definieren (verhindert NameError)
-client = None
-api_key = None
-
-# --- HELFER-FUNKTIONEN ---
+# --- 3. HELFER-FUNKTIONEN ---
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -38,58 +45,56 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 3. SEITENLEISTE (EINGABEN) ---
+# --- 4. SEITENLEISTE (API KEYS LADEN) ---
 with st.sidebar:
     st.header("⚙️ Einstellungen")
     
-    # Der Reset-Knopf (damit du ihn immer hast)
-    if st.button("🔄 App neu laden (Reset)"):
+    # Reset Knopf
+    if st.button("🔄 App Reset / Neu laden"):
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
     
     # Modus Auswahl
-    modus = st.radio("Modus wählen:", ("Rechnung schreiben", "Auftrag annehmen"), index=0)
+    modus = st.radio("Modus:", ("Rechnung schreiben", "Auftrag annehmen"))
     st.markdown("---")
     
-    # API Keys laden
+    # 1. OpenAI Key laden
     api_key_default = st.secrets.get("openai_api_key", "")
-    if api_key_default: 
-        st.success("✅ KI-System bereit")
+    if api_key_default:
         api_key = api_key_default
-    else: 
-        st.error("❌ KI-Key fehlt")
+        st.success("✅ KI aktiv")
+    else:
         api_key = st.text_input("OpenAI Key", type="password")
-    
+        if not api_key: st.error("❌ KI Key fehlt")
+
+    # 2. Google Cloud laden
     google_json_raw = st.secrets.get("google_json", "")
     google_creds = clean_json_string(google_json_raw)
+    if google_creds: st.success("☁️ Cloud aktiv")
     
-    if google_creds: st.success("☁️ Cloud Speicher aktiv")
-    else: st.error("❌ Google Key Fehler")
-        
-    blatt_name = st.text_input("Dateiname", value="Auftragsbuch")
+    blatt_name = st.text_input("Google Sheet Name", value="Auftragsbuch")
     
-    # Email Settings
-    email_sender_default = st.secrets.get("email_sender", "")
-    email_password_default = st.secrets.get("email_password", "")
+    # 3. Email laden
+    email_sender = st.secrets.get("email_sender", "")
+    email_password = st.secrets.get("email_password", "")
     smtp_server = st.secrets.get("smtp_server", "smtp.ionos.de")
     smtp_port = st.secrets.get("smtp_port", 465)
     
-    if email_sender_default: st.success("📧 E-Mail aktiv")
-    else: st.info("E-Mail manuell:") 
-    email_sender = email_sender_default or st.text_input("E-Mail")
-    email_password = email_password_default or st.text_input("Passwort", type="password")
-    email_receiver = st.text_input("Empfänger (Büro/DATEV)", value=email_sender)
+    if email_sender: 
+        st.success("📧 Mail aktiv")
+        email_receiver = st.text_input("Empfänger", value=email_sender)
+    else:
+        st.info("Keine E-Mail konfiguriert")
 
-# --- 4. KI CLIENT STARTEN ---
-# Wir machen das HIER, nachdem api_key sicher definiert wurde
+# --- 5. CLIENT INITIALISIEREN (NACHDEM API KEY GELADEN WURDE) ---
 if api_key:
     try:
         client = OpenAI(api_key=api_key)
     except Exception as e:
-        st.error(f"Fehler beim Starten der KI: {e}")
+        st.error(f"Fehler: {e}")
 
-# --- 5. LOGIK-FUNKTIONEN ---
+# --- 6. LOGIK & FUNKTIONEN ---
 
 def baue_datev_datei(daten):
     umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -111,7 +116,7 @@ def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # KOPF
+    # KOPF (Manuell & Sicher)
     pdf.set_text_color(0, 0, 0)
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
@@ -155,6 +160,7 @@ def erstelle_bericht_pdf(daten):
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
+    
     pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R'); pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
     pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R'); pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
     pdf.set_font("Helvetica", 'B', 12)
@@ -231,8 +237,8 @@ def sende_mail(pfad, d):
         s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
     except: return False
 
-# --- HAUPTPROGRAMM ---
-st.title("📝 MeisterBot")
+# --- 7. HAUPTPROGRAMM ---
+st.title("🚀 MeisterBot 3.0") # Wenn du das siehst, hat das Update geklappt!
 
 if modus == "Rechnung schreiben":
     st.caption("Modus: 🔵 Rechnung & PDF erstellen")
