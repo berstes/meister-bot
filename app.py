@@ -1,3 +1,19 @@
+Das freut mich sehr, dass es jetzt läuft! Klasse.
+
+Die Adressdaten fügen wir sofort in den Kopfbereich (Header) ein. Da wir jetzt mehr Text haben, verschieben wir die graue Trennlinie einfach ein Stück nach unten, damit alles gut aussieht.
+
+Hier ist der komplette Code mit deiner Adresse und E-Mail im PDF-Kopf.
+
+Anleitung wie immer:
+
+Alles alte löschen.
+
+Diesen Code einfügen.
+
+"Rerun" klicken.
+
+Python
+
 import streamlit as st
 import os
 import json
@@ -15,28 +31,20 @@ from fpdf import FPDF
 # --- 1. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot", page_icon="📝")
 
-# --- HIER SIND JETZT ALLE FUNKTIONEN (GANZ OBEN) ---
+# --- DATEV & HILFSFUNKTIONEN (GANZ OBEN) ---
 
-# 1. DATEV FUNKTION (Umbennant zur Sicherheit)
 def baue_datev_datei(daten):
     # DATEV Format Spezifikationen
     umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
     datum = datetime.now().strftime("%d%m")
-    
-    # Rechnungsnummer
     rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
-    
-    # Buchungstext
     raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
     buchungstext = raw_text.replace(";", " ")[:60]
     
-    # Header & Zeile
     header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
     line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
-    
     return f"{header}\n{line}"
 
-# 2. Hilfsfunktionen
 def clean_json_string(s):
     if not s: return ""
     try: return json.loads(s)
@@ -47,18 +55,34 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# 3. PDF Generator
+# --- 2. PDF GENERATOR (MIT NEUER ADRESSE) ---
+
 class PDF(FPDF):
     def header(self):
+        # Logo
         if os.path.exists("logo.png"): self.image("logo.png", 160, 8, 20)
         elif os.path.exists("logo.jpg"): self.image("logo.jpg", 160, 8, 20)
+        
+        # Firmenname
         self.set_font('Arial', 'B', 15)
         self.cell(80, 10, 'INTERWARK', 0, 1, 'L')
+        
+        # Inhaber & Adresse (HIER SIND DEINE ÄNDERUNGEN)
         self.set_font('Arial', '', 10)
         self.cell(80, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
-        self.set_draw_color(200,200,200); self.line(10, 35, 200, 35); self.ln(20)
+        self.cell(80, 5, 'Hohe Str. 26', 0, 1, 'L')
+        self.cell(80, 5, '26725 Emden', 0, 1, 'L')
+        self.cell(80, 5, 'info@interwark.de', 0, 1, 'L')
+        
+        # Trennlinie (angepasst auf Y=50, damit der Text Platz hat)
+        self.set_draw_color(200,200,200)
+        self.line(10, 50, 200, 50) 
+        self.ln(20) # Abstand zum Inhalt
+
     def footer(self):
-        self.set_y(-30); self.set_font('Arial', 'I', 8); self.set_text_color(128)
+        self.set_y(-30)
+        self.set_font('Arial', 'I', 8)
+        self.set_text_color(128)
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
 def erstelle_bericht_pdf(daten):
@@ -66,7 +90,7 @@ def erstelle_bericht_pdf(daten):
     pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
-    # Kopfdaten
+    # Empfänger
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
     pdf.set_font("Arial", '', 12)
@@ -298,9 +322,9 @@ if uploaded_file and api_key:
             c_info2.metric("Nr.", daten.get('rechnungs_nr'))
             c_info3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
             
-            # 3. Dateien erstellen (HIER NEUER FUNKTIONS-NAME!)
+            # 3. Dateien erstellen
             pdf_datei = erstelle_bericht_pdf(daten)
-            datev_csv_content = baue_datev_datei(daten) # <--- Neuer Name benutzt!
+            datev_csv_content = baue_datev_datei(daten)
             
             # 4. Speichern
             if speichere_in_google_sheets(daten): st.toast("✅ Gespeichert")
