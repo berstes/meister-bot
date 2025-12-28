@@ -177,7 +177,30 @@ def erstelle_bericht_pdf(daten):
         pdf.cell(30, 8, gesamt, 1, 1, 'R')
         i += 1
     
-    # 6. Summenblock
+    # --- 6. DATEV EXPORT ---
+
+    def erstelle_datev_csv(daten):
+    # DATEV Format Spezifikationen
+    umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
+    datum = datetime.now().strftime("%d%m")
+    
+    # Rechnungsnummer aus den Daten nehmen
+    rechnungs_nr = daten.get('rechnungs_nr', datetime.now().strftime("%y%m%d%H%M"))
+    
+    # Buchungstext vorbereiten (Sonderzeichen raus)
+    raw_text = f"{daten.get('kunde_name')} {daten.get('problem_titel')}"
+    buchungstext = raw_text.replace(";", " ")[:60]
+    
+    # Header für DATEV
+    header = "Umsatz (ohne Soll/Haben-Kz);Soll/Haben-Kennzeichen;WKZ;Konto;Gegenkonto (ohne BU-Schlüssel);Belegdatum;Belegfeld 1;Buchungstext"
+    
+    # Die Buchungszeile
+    # Standard: Konto 8400 (Erlöse 19%), Gegenkonto 1410 (Forderungen)
+    line = f"{umsatz};S;EUR;8400;1410;{datum};{rechnungs_nr};{buchungstext}"
+    
+    return f"{header}\n{line}"
+    
+    # 7. Summenblock
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -194,7 +217,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    # 7. Abschluss-Text
+    # 8. Abschluss-Text
     pdf.ln(15)
     pdf.set_font("Arial", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
@@ -355,6 +378,7 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
 
