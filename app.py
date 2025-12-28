@@ -13,7 +13,7 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot", page_icon="📝")
+st.set_page_config(page_title="KI(IW)_bot", page_icon="📝")
 
 def clean_json_string(s):
     if not s: return ""
