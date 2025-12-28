@@ -14,7 +14,7 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot", page_icon="📝")
+st.set_page_config(page_title="MeisterBot Neu", page_icon="🔴")
 
 # --- HELFER & DATEV ---
 def baue_datev_datei(daten):
@@ -40,60 +40,59 @@ def clean_json_string(s):
 # --- 2. PDF KLASSE ---
 class PDF(FPDF):
     def header(self):
-        # Header komplett deaktiviert
-        pass
-
+        pass # Kein automatischer Header, wir machen das manuell
+    
     def footer(self):
         self.set_y(-30)
-        self.set_font('Helvetica', 'I', 8) # Helvetica statt Arial
+        self.set_font('Helvetica', 'I', 8)
         self.set_text_color(128)
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
-# --- 3. BERICHT ERSTELLEN (DEBUG MODUS) ---
+# --- 3. BERICHT ERSTELLEN (MANUELL) ---
 def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
     
-    # Hilfsfunktion
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
     # --- KOPFBEREICH ---
-    
-    # Wir setzen den Cursor hart auf 1cm von oben und links
-    pdf.set_xy(10, 10)
     pdf.set_text_color(0, 0, 0) # Schwarz
+    
+    # 1. Logo (falls vorhanden)
+    if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
+    elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
 
-    # 1. Firmenname
+    # 2. Adresse (Wir schreiben jede Zeile einzeln an eine feste Position)
+    # Zeile 1: FIRMA (Y=10mm)
+    pdf.set_xy(10, 10)
     pdf.set_font('Helvetica', 'B', 16)
-    # fill=False stellt sicher, dass kein Hintergrund gemalt wird (außer wir wollen es debuggen)
-    pdf.cell(0, 10, 'INTERWARK', ln=1)
-
-    # 2. Adresse (Explizit untereinander)
+    pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
+    
+    # Zeile 2: Name (Y=18mm)
+    pdf.set_xy(10, 18)
     pdf.set_font('Helvetica', '', 10)
+    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
     
-    # Hier schreiben wir die Zeilen hart rein
-    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', ln=1)
-    pdf.cell(0, 5, 'Hohe Str. 26', ln=1)
-    pdf.cell(0, 5, '26725 Emden', ln=1)
-    pdf.cell(0, 5, 'info@interwark.de', ln=1)
+    # Zeile 3: Straße (Y=23mm)
+    pdf.set_xy(10, 23)
+    pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
     
-    # 3. Logo JETZT erst einfügen (rechts oben)
-    # Wir prüfen, ob das Bild existiert und nicht zu groß ist
-    if os.path.exists("logo.png"): 
-        pdf.image("logo.png", x=160, y=10, w=20)
-    elif os.path.exists("logo.jpg"): 
-        pdf.image("logo.jpg", x=160, y=10, w=20)
+    # Zeile 4: Ort (Y=28mm)
+    pdf.set_xy(10, 28)
+    pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
+    
+    # Zeile 5: Mail (Y=33mm)
+    pdf.set_xy(10, 33)
+    pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
 
-    # 4. Linie
-    pdf.ln(5)
-    y_linie = pdf.get_y()
-    pdf.set_draw_color(0, 0, 0) # Schwarze Linie
-    pdf.line(10, y_linie, 200, y_linie)
+    # Linie (Y=42mm)
+    pdf.set_draw_color(0, 0, 0)
+    pdf.line(10, 42, 200, 42)
     
     # --- ENDE KOPF ---
     
-    # Sicherheitshalber Cursor weit nach unten
-    pdf.set_y(60)
+    # Springe nach unten für den Rest
+    pdf.set_y(55)
     
     # Kunde
     pdf.set_font("Helvetica", 'B', 12)
@@ -112,10 +111,9 @@ def erstelle_bericht_pdf(daten):
     datum_heute = datetime.now().strftime('%d.%m.%Y')
     pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), ln=1)
     pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), ln=1)
-    
     pdf.ln(10)
     
-    # Tabelle Header
+    # Tabelle
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Helvetica", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1)
@@ -124,7 +122,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
     pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
-    # Positionen
+    # Inhalt
     pdf.set_font("Helvetica", '', 10)
     i = 1
     for pos in daten.get('positionen', []):
@@ -140,30 +138,25 @@ def erstelle_bericht_pdf(daten):
         i += 1
     
     # Summen
+    pdf.ln(5)
+    pdf.set_font("Helvetica", '', 11)
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
     brutto = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
     
-    pdf.ln(5)
-    pdf.set_font("Helvetica", '', 11)
-    pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R')
-    pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
-    pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R')
-    pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
+    pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R'); pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
+    pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R'); pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
-    pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
+    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    pdf.ln(15)
+    pdf.ln(10)
     pdf.set_font("Helvetica", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
     
-    # Neuer Dateiname gegen Cache-Probleme
     timestamp = int(time.time())
     dateiname = f"Bericht_{rechnungs_nr}_{timestamp}.pdf"
     pdf.output(dateiname)
     return dateiname
-
 
 # Secrets laden
 api_key_default = st.secrets.get("openai_api_key", "")
@@ -198,7 +191,6 @@ client = None
 if api_key: client = OpenAI(api_key=api_key)
 
 # --- WEITERE FUNKTIONEN ---
-
 def lade_preise_live():
     fallback_text = "PREISLISTE (Fallback): - Anfahrt: 22 EUR - Arbeitszeit: 77 EUR"
     if not google_creds: return fallback_text
@@ -303,10 +295,10 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         print(f"Mail Fehler: {e}")
         return False
 
-
 # --- APP START ---
-st.title("📝 MeisterBot")
-st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
+# Wir ändern den TITEL, damit du SIEHST, ob das Update geklappt hat!
+st.title("🔴 NEUE VERSION - TEST 🔴")
+st.caption("Bitte Cache leeren und 'Rerun' klicken, wenn du diesen Titel nicht siehst.")
 
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
 
@@ -318,7 +310,6 @@ if uploaded_file and api_key:
             f.write(uploaded_file.getbuffer())
         
         try:
-            # 1. KI-Analyse
             transkript = audio_zu_text(f.name)
             daten = text_zu_daten(transkript, preise_text)
             daten['rechnungs_nr'] = hole_neue_rechnungsnummer()
@@ -329,18 +320,12 @@ if uploaded_file and api_key:
             c_info2.metric("Nr.", daten.get('rechnungs_nr'))
             c_info3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
             
-            # 3. Dateien erstellen
             pdf_datei = erstelle_bericht_pdf(daten)
             datev_csv_content = baue_datev_datei(daten)
             
-            # 4. Speichern
             if speichere_in_google_sheets(daten): st.toast("✅ Gespeichert")
-            else: st.toast("⚠️ Fehler beim Speichern (Google)")
-                
-            if email_sender: 
-                if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail versendet")
             
-            # 5. Downloads
+            # Downloads
             st.markdown("### 📥 Downloads")
             c_dl1, c_dl2 = st.columns(2)
             
@@ -351,4 +336,3 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
-
