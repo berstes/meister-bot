@@ -1,3 +1,13 @@
+Das ist gut! Das bedeutet, dass der Code vorhin funktioniert hat und wir das Problem mit der Anzeige gelöst haben. Dass da noch "TEST" steht, liegt nur daran, dass du gerade noch den "Test-Code" von vorhin ausführst.
+
+Jetzt tauschen wir diesen "Test-Code" gegen den finalen, sauberen Code aus.
+
+Damit verschwindet das "NEUE VERSION - TEST" und es steht wieder ganz professionell "MeisterBot" dort. Auch der PDF-Name ist dann wieder sauber.
+
+Hier ist der finale Code (Bitte alles löschen, diesen einfügen und "Rerun" klicken):
+
+Python
+
 import streamlit as st
 import os
 import json
@@ -14,7 +24,8 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot", page_icon="📝")
+# Hier wird der Titel zurückgesetzt
+st.set_page_config(page_title="MeisterBot", page_icon="✅")
 
 # --- HELFER & DATEV ---
 def baue_datev_datei(daten):
@@ -281,7 +292,8 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return False
 
 # --- APP START ---
-st.title("📝 KI(IW)Bot")
+# Titel zurück auf MeisterBot
+st.title("✅ MeisterBot")
 st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
 
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
@@ -320,4 +332,3 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
-
