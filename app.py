@@ -299,40 +299,63 @@ if uploaded_file and api_key:
     preise_text = lade_preise_live()
 
     with st.spinner("⏳ Analysiere Audio & Berechne..."):
-        with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f: f.write(uploaded_file.getbuffer())
+        # Temporäre Datei speichern
+        with open(f"temp.{uploaded_file.name.split('.')[-1]}", "wb") as f: 
+            f.write(uploaded_file.getbuffer())
         
         try:
+            # 1. KI-Analyse
             transkript = audio_zu_text(f.name)
             daten = text_zu_daten(transkript, preise_text)
+            
+            # 2. Nummer holen (WICHTIG: Damit 'ENTWURF' weggeht)
+            daten['rechnungs_nr'] = hole_neue_rechnungsnummer()
 
-            # --- HIER FEHLT WAHRSCHEINLICH DIESE ZEILE: ---
-            daten['rechnungs_nr'] = hole_neue_rechnungsnummer() 
-            # ----------------------------------------------
-            
             st.markdown("---")
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Kunde", daten.get('kunde_name'))
-            c2.metric("Netto", f"{daten.get('summe_netto'):.2f} €")
-            c3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
             
+            # 3. Anzeige
+            c_info1, c_info2, c_info3 = st.columns(3)
+            c_info1.metric("Kunde", daten.get('kunde_name', 'Unbekannt'))
+            c_info2.metric("Nr.", daten.get('rechnungs_nr'))
+            c_info3.metric("Brutto", f"{daten.get('summe_brutto'):.2f} €")
+            
+            # 4. PDF & CSV erstellen
             pdf_datei = erstelle_bericht_pdf(daten)
+            datev_csv_content = erstelle_datev_csv(daten)
             
-            if speichere_in_google_sheets(daten): st.toast("✅ Gespeichert")
-            else: st.toast("⚠️ Fehler beim Speichern")
+            # 5. Speichern
+            if speichere_in_google_sheets(daten): st.toast("✅ In Google Sheets gespeichert")
+            else: st.toast("⚠️ Fehler beim Speichern (Google)")
                 
             if email_sender: 
                 if sende_email_mit_pdf(pdf_datei, daten): st.toast("📧 E-Mail versendet")
             
+            # 6. DOWNLOADS (Hier war der Fehler!)
+            st.markdown("### 📥 Downloads")
+            
+            # HIER definieren wir die Spalten c_dl1 und c_dl2:
+            c_dl1, c_dl2 = st.columns(2)
+            
+            # Button 1: PDF
             with open(pdf_datei, "rb") as f:
                 c_dl1.download_button(
-                    label="📄 Arbeitsbericht PDF", # Label angepasst
+                    label="📄 Arbeitsbericht PDF",
                     data=f,
-                    file_name=f"Arbeitsbericht_{daten.get('rechnungs_nr')}.pdf", # Name angepasst
+                    file_name=f"Arbeitsbericht_{daten.get('rechnungs_nr')}.pdf",
                     mime="application/pdf",
                 )
+            
+            # Button 2: DATEV
+            c_dl2.download_button(
+                label="📊 DATEV Export (CSV)",
+                data=datev_csv_content,
+                file_name=f"DATEV_Buchung_{daten.get('rechnungs_nr')}.csv",
+                mime="text/csv",
+            )
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
 
 
 
