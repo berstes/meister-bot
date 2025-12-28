@@ -15,7 +15,7 @@ from fpdf import FPDF
 # --- 1. KONFIGURATION ---
 st.set_page_config(page_title="MeisterBot", page_icon="📝")
 
-# --- DATEV & HELFER ---
+# --- HELFER & DATEV ---
 def baue_datev_datei(daten):
     umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
     datum = datetime.now().strftime("%d%m")
@@ -36,13 +36,12 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 2. PDF GENERATOR ---
-
+# --- 2. PDF KLASSE (Nur Footer) ---
 class PDF(FPDF):
-    # Wir lassen den Header hier leer, um Konflikte zu vermeiden.
-    # Wir schreiben den Kopf gleich manuell.
     def header(self):
-        pass 
+        # Wir lassen den Header hier LEER.
+        # Wir schreiben alles manuell im Hauptteil, das ist sicherer.
+        pass
 
     def footer(self):
         self.set_y(-30)
@@ -50,71 +49,68 @@ class PDF(FPDF):
         self.set_text_color(128)
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
+# --- 3. BERICHT ERSTELLEN (LINEARER ABLAUF) ---
 def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
     
-    # --- KOPFBEREICH MANUELL (Sicherste Methode) ---
+    # Hilfsfunktion
+    def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
+
+    # --- ABSCHNITT 1: DEINE FIRMENDATEN (Linear untereinander) ---
     
-    # 1. Logo
+    # Falls Logo da ist, malen wir es rechts hin, stört den Text links nicht
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
-    
-    # 2. Adresse (Wir zwingen den Cursor an feste Positionen)
+
+    # Cursor auf Start setzen (10mm von oben)
+    pdf.set_y(10)
     pdf.set_text_color(0, 0, 0) # Schwarz
-    
-    # Zeile 1: FIRMA (bei 10mm von oben)
-    pdf.set_xy(10, 10)
+
+    # 1. Firmenname (Fett)
     pdf.set_font('Arial', 'B', 16)
-    pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
-    
-    # Zeile 2: Name (bei 20mm von oben)
-    pdf.set_xy(10, 20)
+    # ln=1 bedeutet: Nach dem Text Zeilenumbruch machen
+    pdf.cell(0, 8, 'INTERWARK', ln=1) 
+
+    # 2. Adresse (Normal)
     pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
+    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', ln=1)
+    pdf.cell(0, 5, 'Hohe Str. 26', ln=1)
+    pdf.cell(0, 5, '26725 Emden', ln=1)
+    pdf.cell(0, 5, 'info@interwark.de', ln=1)
     
-    # Zeile 3: Straße (bei 25mm von oben)
-    pdf.set_xy(10, 25)
-    pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
+    # 3. Linie (etwas Abstand lassen)
+    pdf.ln(5) 
+    # Linie von ganz links (10) bis ganz rechts (200) auf aktueller Höhe (get_y)
+    y = pdf.get_y()
+    pdf.set_draw_color(150, 150, 150)
+    pdf.line(10, y, 200, y)
     
-    # Zeile 4: Stadt (bei 30mm von oben)
-    pdf.set_xy(10, 30)
-    pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
+    # --- ABSCHNITT 2: KUNDE & INHALT ---
     
-    # Zeile 5: E-Mail (bei 35mm von oben)
-    pdf.set_xy(10, 35)
-    pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
+    pdf.ln(10) # 1cm Abstand nach der Linie
     
-    # Linie ziehen (bei 45mm von oben)
-    pdf.set_draw_color(200, 200, 200)
-    pdf.line(10, 45, 200, 45)
-    
-    # --- ENDE KOPFBEREICH ---
-    
-    # Jetzt schieben wir den Start für den Rest weit nach unten (auf 60mm)
-    pdf.set_y(60)
-    
-    def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
-    
-    # Empfänger
+    # Kunde
     pdf.set_font("Arial", 'B', 12)
-    pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
+    pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), ln=1)
     pdf.set_font("Arial", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # Titel Block
-    pdf.ln(10) 
+    # Titel
+    pdf.ln(15) 
     pdf.set_font("Arial", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
-    pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), 0, 1)
+    pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
+    # Datum & Betreff
     pdf.set_font("Arial", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
-    pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), 0, 1)
-    pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), 0, 1)
-    pdf.ln(10)
+    pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), ln=1)
+    pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), ln=1)
     
-    # Tabelle
+    pdf.ln(10) # Abstand zur Tabelle
+    
+    # Tabelle Header
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1)
@@ -123,6 +119,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
     pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
+    # Positionen
     pdf.set_font("Arial", '', 10)
     i = 1
     for pos in daten.get('positionen', []):
@@ -130,6 +127,7 @@ def erstelle_bericht_pdf(daten):
         menge = str(pos.get('menge', ''))
         einzel = f"{pos.get('einzel_netto', 0):.2f}".replace('.', ',')
         gesamt = f"{pos.get('gesamt_netto', 0):.2f}".replace('.', ',')
+        
         pdf.cell(10, 8, str(i), 1, 0, 'C')
         pdf.cell(90, 8, text, 1, 0, 'L')
         pdf.cell(20, 8, menge, 1, 0, 'C')
@@ -152,6 +150,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
+    # Abschluss
     pdf.ln(15)
     pdf.set_font("Arial", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
@@ -159,6 +158,7 @@ def erstelle_bericht_pdf(daten):
     dateiname = f"Arbeitsbericht_{rechnungs_nr}.pdf"
     pdf.output(dateiname)
     return dateiname
+
 
 # Secrets laden
 api_key_default = st.secrets.get("openai_api_key", "")
@@ -316,8 +316,6 @@ if uploaded_file and api_key:
             # 1. KI-Analyse
             transkript = audio_zu_text(f.name)
             daten = text_zu_daten(transkript, preise_text)
-            
-            # 2. Nummer holen
             daten['rechnungs_nr'] = hole_neue_rechnungsnummer()
 
             st.markdown("---")
