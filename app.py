@@ -14,7 +14,7 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot Neu", page_icon="🔴")
+st.set_page_config(page_title="MeisterBot", page_icon="📝")
 
 # --- HELFER & DATEV ---
 def baue_datev_datei(daten):
@@ -40,7 +40,7 @@ def clean_json_string(s):
 # --- 2. PDF KLASSE ---
 class PDF(FPDF):
     def header(self):
-        pass # Kein automatischer Header, wir machen das manuell
+        pass # Manuell gesteuert
     
     def footer(self):
         self.set_y(-30)
@@ -48,50 +48,35 @@ class PDF(FPDF):
         self.set_text_color(128)
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
-# --- 3. BERICHT ERSTELLEN (MANUELL) ---
+# --- 3. BERICHT ERSTELLEN ---
 def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
     
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # --- KOPFBEREICH ---
-    pdf.set_text_color(0, 0, 0) # Schwarz
+    # --- KOPFBEREICH (Fixiert) ---
+    pdf.set_text_color(0, 0, 0)
     
-    # 1. Logo (falls vorhanden)
+    # 1. Logo
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
 
-    # 2. Adresse (Wir schreiben jede Zeile einzeln an eine feste Position)
-    # Zeile 1: FIRMA (Y=10mm)
-    pdf.set_xy(10, 10)
+    # 2. Adresse (Manuell positioniert)
     pdf.set_font('Helvetica', 'B', 16)
-    pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
+    pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
     
-    # Zeile 2: Name (Y=18mm)
-    pdf.set_xy(10, 18)
     pdf.set_font('Helvetica', '', 10)
-    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
-    
-    # Zeile 3: Straße (Y=23mm)
-    pdf.set_xy(10, 23)
-    pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
-    
-    # Zeile 4: Ort (Y=28mm)
-    pdf.set_xy(10, 28)
-    pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
-    
-    # Zeile 5: Mail (Y=33mm)
-    pdf.set_xy(10, 33)
-    pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
+    pdf.set_xy(10, 18); pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
+    pdf.set_xy(10, 23); pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
+    pdf.set_xy(10, 28); pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
+    pdf.set_xy(10, 33); pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
 
-    # Linie (Y=42mm)
+    # Linie
     pdf.set_draw_color(0, 0, 0)
     pdf.line(10, 42, 200, 42)
     
-    # --- ENDE KOPF ---
-    
-    # Springe nach unten für den Rest
+    # --- INHALT ---
     pdf.set_y(55)
     
     # Kunde
@@ -122,7 +107,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
     pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
-    # Inhalt
+    # Positionen
     pdf.set_font("Helvetica", '', 10)
     i = 1
     for pos in daten.get('positionen', []):
@@ -296,9 +281,8 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return False
 
 # --- APP START ---
-# Wir ändern den TITEL, damit du SIEHST, ob das Update geklappt hat!
-st.title("🔴 NEUE VERSION - TEST 🔴")
-st.caption("Bitte Cache leeren und 'Rerun' klicken, wenn du diesen Titel nicht siehst.")
+st.title("📝 MeisterBot")
+st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
 
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
 
