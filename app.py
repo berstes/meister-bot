@@ -1,3 +1,21 @@
+Das ist der Beweis, dass dein Handy oder der Server die alte Datei noch im Speicher festhält. Du führst gerade immer noch den Code von vor 5 Minuten aus, obwohl du vielleicht schon neuen eingefügt hast.
+
+Das passiert manchmal bei Web-Apps. Wir müssen den Browser zwingen, alles zu vergessen und neu zu laden.
+
+Bitte mache es exakt in dieser Reihenfolge:
+
+Lösche den gesamten Code in deiner Datei.
+
+Kopiere den Code unten (das ist der finale, saubere Code).
+
+Füge ihn ein.
+
+WICHTIG: Drücke nicht nur auf "Rerun", sondern lade die ganze Internetseite neu (Browser-Aktualisieren Button oder am Handy den Bildschirm nach unten ziehen).
+
+Hier ist der Code, bei dem ich den Titel extra auf "✅ MeisterBot Final" gesetzt habe, damit du sofort siehst, wenn es geklappt hat.
+
+Python
+
 import streamlit as st
 import os
 import json
@@ -14,7 +32,7 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
-# Hier wird der Titel zurückgesetzt
+# Titel der App im Browser-Tab
 st.set_page_config(page_title="MeisterBot", page_icon="✅")
 
 # --- HELFER & DATEV ---
@@ -282,8 +300,8 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return False
 
 # --- APP START ---
-# Titel zurück auf MeisterBot
-st.title("✅ MeisterBot")
+# Wir ändern den Titel zurück auf den Original-Namen
+st.title("✅ MeisterBot Final")
 st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
 
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
@@ -322,4 +340,3 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
-
