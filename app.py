@@ -281,7 +281,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return False
 
 # --- APP START ---
-st.title("📝 MeisterBot")
+st.title("📝 KI(IW)Bot")
 st.caption("Sprachnachricht hochladen -> PDF & DATEV-Daten erhalten")
 
 uploaded_file = st.file_uploader("Sprachnachricht", type=["mp3", "wav", "m4a", "ogg", "opus"], label_visibility="collapsed")
@@ -320,3 +320,4 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
