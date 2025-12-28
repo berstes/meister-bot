@@ -14,6 +14,7 @@ from openai import OpenAI
 from fpdf import FPDF
 
 # --- 1. KONFIGURATION ---
+# Titel im Browser-Tab
 st.set_page_config(page_title="MeisterBot", page_icon="📝")
 
 # --- HELFER & DATEV ---
@@ -40,7 +41,7 @@ def clean_json_string(s):
 # --- 2. PDF KLASSE ---
 class PDF(FPDF):
     def header(self):
-        pass 
+        pass # Manuell gesteuert
     
     def footer(self):
         self.set_y(-30)
@@ -55,11 +56,14 @@ def erstelle_bericht_pdf(daten):
     
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # KOPF
+    # --- KOPFBEREICH (Fixiert) ---
     pdf.set_text_color(0, 0, 0)
+    
+    # 1. Logo
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
 
+    # 2. Adresse (Manuell positioniert)
     pdf.set_font('Helvetica', 'B', 16)
     pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
     
@@ -69,27 +73,33 @@ def erstelle_bericht_pdf(daten):
     pdf.set_xy(10, 28); pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
     pdf.set_xy(10, 33); pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
 
+    # Linie
     pdf.set_draw_color(0, 0, 0)
     pdf.line(10, 42, 200, 42)
     
-    # INHALT
+    # --- INHALT ---
     pdf.set_y(55)
+    
+    # Kunde
     pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), ln=1)
     pdf.set_font("Helvetica", '', 12)
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
+    # Titel
     pdf.ln(10) 
     pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
+    # Datum
     pdf.set_font("Helvetica", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
     pdf.cell(0, 5, txt(f"Arbeitsbericht Datum: {datum_heute}"), ln=1)
     pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), ln=1)
     pdf.ln(10)
     
+    # Tabelle
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Helvetica", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1)
@@ -98,6 +108,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
     pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
+    # Positionen
     pdf.set_font("Helvetica", '', 10)
     i = 1
     for pos in daten.get('positionen', []):
@@ -112,6 +123,7 @@ def erstelle_bericht_pdf(daten):
         pdf.cell(30, 8, gesamt, 1, 1, 'R')
         i += 1
     
+    # Summen
     pdf.ln(5)
     pdf.set_font("Helvetica", '', 11)
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
@@ -144,14 +156,12 @@ google_json_raw = st.secrets.get("google_json", "")
 with st.sidebar:
     st.header("⚙️ Einstellungen")
     
-    # --- HIER IST DIE NEUE WEICHE ---
     modus = st.radio(
         "Modus wählen:",
         ("Rechnung schreiben", "Auftrag annehmen"),
         index=0
     )
     st.markdown("---")
-    # --------------------------------
     
     if api_key_default: st.success("✅ KI-System bereit")
     else: st.error("❌ KI-Key fehlt")
@@ -264,7 +274,6 @@ def speichere_rechnung(daten):
         if not google_creds: return False
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
-        # Blatt 1 für Rechnungen
         worksheet = sh.get_worksheet(0) 
         if not worksheet.get_all_values(): 
             worksheet.append_row(["Rechnungs-Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto"])
@@ -289,7 +298,6 @@ def speichere_auftrag(daten):
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         
-        # Versuche Blatt "Offene Aufträge" zu finden oder zu erstellen
         try:
             worksheet = sh.worksheet("Offene Aufträge")
         except:
@@ -333,7 +341,7 @@ def sende_email_mit_pdf(pdf_pfad, daten):
         return False
 
 # --- APP START ---
-st.title("📝 MeisterBot")
+st.title("📝 MeisterBot") # Hier steht jetzt wieder der richtige Titel!
 
 # Je nach Modus anderer Untertitel
 if modus == "Rechnung schreiben":
@@ -399,7 +407,7 @@ if uploaded_file and api_key:
                 st.markdown("---")
                 st.success(f"Auftrag von **{auftrags_daten.get('kunde_name')}** erkannt.")
                 
-                st.json(auftrags_daten) # Zeigt die erkannten Daten schön an
+                st.json(auftrags_daten)
                 
                 if speichere_auftrag(auftrags_daten):
                     st.toast("✅ Auftrag gespeichert!")
@@ -409,4 +417,3 @@ if uploaded_file and api_key:
                     
             except Exception as e:
                 st.error(f"Fehler: {e}")
-
