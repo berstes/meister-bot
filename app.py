@@ -1,23 +1,3 @@
-Das ist eine super Erweiterung! Damit wird der MeisterBot zur vollständigen Schaltzentrale.
-
-Du hast jetzt oben links in der Seitenleiste eine neue Auswahl:
-
-Rechnung schreiben: (Wie bisher: Preise berechnen, PDF, DATEV)
-
-Auftrag annehmen: (Neu: Nur zuhören, Daten erfassen, in "Offene Aufträge" speichern – ohne Geld/Rechnung).
-
-Der Bot unterscheidet jetzt also:
-
-"Müller Heizung kaputt, bitte reparieren" -> Auftrag annehmen -> Speichert in Liste für Montag.
-
-"Bei Müller Heizung repariert, 2 Stunden" -> Rechnung schreiben -> Macht PDF & DATEV fertig.
-
-Hier ist der komplette Code mit der neuen Weiche. (Ich habe auch den Titel wieder auf "📝 MeisterBot" gesetzt, ganz sauber).
-
-Vorgehen: Alles löschen -> Einfügen -> Rerun -> In der Seitenleiste den Modus testen!
-
-Python
-
 import streamlit as st
 import os
 import json
@@ -429,3 +409,4 @@ if uploaded_file and api_key:
                     
             except Exception as e:
                 st.error(f"Fehler: {e}")
+
