@@ -51,7 +51,8 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     
-    modus = st.radio("Modus:", ("Rechnung schreiben", "Auftrag annehmen"))
+    # MODUS UMBENANNT: Statt "Rechnung" jetzt "Bericht & DATEV"
+    modus = st.radio("Modus:", ("Bericht & DATEV erstellen", "Auftrag annehmen"))
     st.markdown("---")
     
     api_key_default = st.secrets.get("openai_api_key", "")
@@ -128,7 +129,7 @@ def text_zu_daten(txt, preise, kunden_db):
     Du bist Buchhalter (Interwark).
     PREISE: {preise}
     KUNDEN-DB: {kunden_db}
-    AUFGABE: Suche Kunde. Erstelle JSON.
+    AUFGABE: Suche Kunde. Erstelle JSON für einen Arbeitsbericht.
     Format: {{'anrede': 'Herr/Frau', 'kunde_name': 'Name', 'adresse': 'Str, PLZ Ort', 'kundennummer': '1000', 'problem_titel': 'Betreff', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}
     """
     res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
@@ -162,12 +163,10 @@ def baue_datev_datei(daten):
 class PDF(FPDF):
     def header(self): pass
     def footer(self):
-        # Footer etwas tiefer
         self.set_y(-20)
         self.set_font('Helvetica', 'I', 8)
         self.set_text_color(128)
-        # Seitenzahl optional
-        self.cell(0, 4, f'Seite {self.page_no()}', 0, 1, 'R')
+        self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
 def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
@@ -201,14 +200,14 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
+    # TITEL: ARBEITSBERICHT
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
-    pdf.cell(0, 10, txt(f"Rechnung Nr. {rechnungs_nr}"), ln=1) # Hier steht jetzt RECHNUNG
+    pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
     pdf.set_font("Helvetica", '', 10)
     datum_heute = datetime.now().strftime('%d.%m.%Y')
-    pdf.cell(0, 5, txt(f"Rechnungsdatum: {datum_heute}"), ln=1)
-    pdf.cell(0, 5, txt(f"Leistungszeitraum: {datum_heute}"), ln=1) # Wichtig für §14
+    pdf.cell(0, 5, txt(f"Datum: {datum_heute}"), ln=1)
     pdf.cell(0, 5, txt(f"Betreff: {daten.get('problem_titel')}"), ln=1)
     pdf.ln(10)
     
@@ -231,24 +230,25 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(150, 6, "Netto Summe:", 0, 0, 'R'); pdf.cell(30, 6, f"{netto} EUR", 0, 1, 'R')
     pdf.cell(150, 6, "+ 19% MwSt:", 0, 0, 'R'); pdf.cell(30, 6, f"{mwst} EUR", 0, 1, 'R')
     pdf.set_font("Helvetica", 'B', 12)
-    pdf.cell(150, 10, "Zahlbetrag:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
+    pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    pdf.ln(10); pdf.set_font("Helvetica", '', 10)
-    pdf.multi_cell(0, 5, txt("Bitte überweisen Sie den Betrag sofort und ohne Abzug."))
-    
-    # --- FUSSTEXT MIT PFLICHTANGABEN NACH §14 UStG ---
-    pdf.ln(5)
-    pdf.set_font("Helvetica", '', 9)
-    # HIER MUSST DU DEINE DATEN EINTRAGEN!
-    # \n macht einen Zeilenumbruch
-    fuss_text = (
-        "Interwark Bernhard Stegemann-Klammt | Hohe Str. 26 | 26725 Emden\n"
-        "Steuernummer: 123/456/7890  |  USt-IdNr.: DE123456789\n" # <--- HIER ÄNDERN
-        "Bank: Sparkasse Emden  |  IBAN: DE00 0000 0000 0000 0000 00  |  BIC: XXXXXXXX" # <--- HIER ÄNDERN
+    # --- DER RECHTLICHE HINWEIS ---
+    pdf.ln(15)
+    pdf.set_font("Helvetica", 'I', 9)
+    # Dein gewünschter Paragraph:
+    hinweis = (
+        "Hinweis: Dieses Dokument dient als Leistungsnachweis und Buchungsvorlage.\n"
+        "Keine Rechnung im Sinne des §14 UStG."
     )
-    pdf.multi_cell(0, 5, txt(fuss_text), 0, 'C')
+    pdf.multi_cell(0, 5, txt(hinweis))
     
-    ts = int(time.time()); dateiname = f"Rechnung_{rechnungs_nr}_{ts}.pdf"
+    # Optional: Bankverbindung für Überweisung (klein)
+    pdf.ln(5)
+    pdf.set_font("Helvetica", '', 8)
+    bank_info = "Bank: Sparkasse Emden | IBAN: DE00 0000 0000 0000 0000 00"
+    pdf.cell(0, 5, txt(bank_info), 0, 1, 'C')
+    
+    ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
     pdf.output(dateiname); return dateiname
 
 def speichere_rechnung(d):
@@ -273,7 +273,7 @@ def speichere_auftrag(d):
 
 def sende_mail(pfad, d):
     try:
-        msg = MIMEMultipart(); msg['From']=email_sender; msg['To']=email_receiver; msg['Subject']=f"Rechnung: {d.get('kunde_name')}"
+        msg = MIMEMultipart(); msg['From']=email_sender; msg['To']=email_receiver; msg['Subject']=f"Bericht: {d.get('kunde_name')}"
         with open(pfad, "rb") as f:
             p = MIMEBase("application", "pdf"); p.set_payload(f.read()); encoders.encode_base64(p)
             p.add_header("Content-Disposition", f'attachment; filename="{os.path.basename(pfad)}"')
@@ -286,8 +286,11 @@ def sende_mail(pfad, d):
 # --- 7. HAUPTPROGRAMM ---
 st.title("🚀 MeisterBot 3.0")
 
-if modus == "Rechnung schreiben":
-    st.caption("Modus: 🔵 Rechnung & PDF erstellen")
+# Modus-Variable wird oben in Sidebar definiert
+if 'modus' not in locals(): modus = "Bericht & DATEV erstellen"
+
+if modus == "Bericht & DATEV erstellen":
+    st.caption("Modus: 🔵 Arbeitsbericht erstellen")
 else:
     st.caption("Modus: 🟠 Neuen Auftrag anlegen")
 
@@ -298,13 +301,13 @@ if f and api_key and client:
     dateiendung = f.name.split('.')[-1]
     temp_filename = f"temp_audio.{dateiendung}"
     
-    if modus == "Rechnung schreiben":
-        with st.spinner("⏳ Erstelle Rechnung..."):
+    if modus == "Bericht & DATEV erstellen":
+        with st.spinner("⏳ Erstelle Bericht..."):
             with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
                 txt = audio_zu_text(temp_filename)
                 preise = lade_preise_live()
-                kunden = lade_kunden_live()
+                kunden = lade_kunden_live() 
                 dat = text_zu_daten(txt, preise, kunden)
                 dat['rechnungs_nr'] = hole_nr()
                 
@@ -322,7 +325,7 @@ if f and api_key and client:
                 
                 st.markdown("### 📥 Downloads")
                 c_a, c_b = st.columns(2)
-                with open(pdf, "rb") as file: c_a.download_button("📄 PDF Rechnung", file, pdf, "application/pdf")
+                with open(pdf, "rb") as file: c_a.download_button("📄 PDF Bericht", file, pdf, "application/pdf")
                 c_b.download_button("📊 DATEV", csv, f"DATEV_{dat.get('rechnungs_nr')}.csv", "text/csv")
                 
                 if email_sender: 
