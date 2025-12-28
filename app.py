@@ -1,13 +1,3 @@
-Das ist ein typisches Problem bei PDFs: Da wir oben mehr Text (Adresse) eingefügt haben, ist der "Kopf" der Seite jetzt größer. Der Rest des Textes ("Kunde: ...") rutscht aber nicht automatisch nach unten, sondern wird darüber gedruckt, weshalb man die Adresse nicht sieht (sie ist verdeckt).
-
-Die Lösung: Ich habe dem PDF-Generator nun den Befehl gegeben: "Starte den Text erst weiter unten (bei 55mm), damit oben genug Platz für deine Adresse ist."
-
-Hier ist der korrigierte Code.
-
-Wichtig: Bitte wieder ALLES löschen und diesen Code einfügen. Danach "Rerun".
-
-Python
-
 import streamlit as st
 import os
 import json
@@ -47,7 +37,7 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 2. PDF GENERATOR (FIX: PLATZ FÜR ADRESSE GESCHAFFEN) ---
+# --- 2. PDF GENERATOR (FIX: ABSOLUTE POSITIONEN) ---
 
 class PDF(FPDF):
     def header(self):
@@ -55,20 +45,31 @@ class PDF(FPDF):
         if os.path.exists("logo.png"): self.image("logo.png", 160, 8, 20)
         elif os.path.exists("logo.jpg"): self.image("logo.jpg", 160, 8, 20)
         
-        # Firmenname
-        self.set_font('Arial', 'B', 15)
-        self.cell(80, 10, 'INTERWARK', 0, 1, 'L')
+        # 1. Firmenname (Fett und groß) - Position Y=10
+        self.set_xy(10, 10)
+        self.set_font('Arial', 'B', 16)
+        self.cell(0, 10, 'INTERWARK', 0, 1, 'L')
         
-        # Deine Adresse (Jetzt korrekt sichtbar)
+        # 2. Name - Position Y=18
+        self.set_xy(10, 18)
         self.set_font('Arial', '', 10)
-        self.cell(80, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
-        self.cell(80, 5, 'Hohe Str. 26', 0, 1, 'L')
-        self.cell(80, 5, '26725 Emden', 0, 1, 'L')
-        self.cell(80, 5, 'info@interwark.de', 0, 1, 'L')
+        self.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
         
-        # Trennlinie (Nach unten geschoben auf Y=45)
+        # 3. Straße - Position Y=23 (HIER HABE ICH ES ERZWINGEN)
+        self.set_xy(10, 23)
+        self.cell(0, 5, 'Hohe Str. 26', 0, 1, 'L')
+        
+        # 4. Stadt - Position Y=28
+        self.set_xy(10, 28)
+        self.cell(0, 5, '26725 Emden', 0, 1, 'L')
+        
+        # 5. E-Mail - Position Y=33
+        self.set_xy(10, 33)
+        self.cell(0, 5, 'info@interwark.de', 0, 1, 'L')
+        
+        # Trennlinie (Nach unten geschoben auf Y=42)
         self.set_draw_color(200,200,200)
-        self.line(10, 45, 200, 45) 
+        self.line(10, 42, 200, 42) 
 
     def footer(self):
         self.set_y(-30)
@@ -80,9 +81,9 @@ def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
     
-    # --- WICHTIGER FIX: TEXT STARTET JETZT TIEFER ---
+    # --- WICHTIG: TEXT ERST AB 55mm STARTEN DAMIT OBEN PLATZ IST ---
     pdf.set_y(55) 
-    # ------------------------------------------------
+    # ---------------------------------------------------------------
     
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
