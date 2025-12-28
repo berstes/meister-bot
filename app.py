@@ -1,3 +1,19 @@
+Das ist wirklich hartnäckig! Wenn Text im PDF "unsichtbar" ist, liegt es oft daran, dass die automatische Kopfzeilen-Funktion (header()) und der Haupttext sich gegenseitig stören oder überschreiben.
+
+Wir gehen jetzt auf Nummer Sicher: Wir werfen die automatische header()-Funktion raus und schreiben den Kopfbereich manuell direkt auf die Seite. Das ist die "Holzhammer-Methode" – damit muss der Text erscheinen, weil er einfach Teil des normalen Dokuments ist.
+
+Hier ist der Code. Er erzwingt, dass deine Adresse ganz oben steht, bevor irgendetwas anderes passiert.
+
+Anleitung:
+
+Alles löschen.
+
+Einfügen.
+
+"Rerun".
+
+Python
+
 import streamlit as st
 import os
 import json
@@ -37,39 +53,12 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 2. PDF GENERATOR (FIX: ABSOLUTE POSITIONEN) ---
+# --- 2. PDF GENERATOR (MANUELLER HEADER) ---
 
 class PDF(FPDF):
+    # Wir nutzen hier NUR den Footer. Den Header bauen wir manuell im Hauptteil.
     def header(self):
-        # Logo
-        if os.path.exists("logo.png"): self.image("logo.png", 160, 8, 20)
-        elif os.path.exists("logo.jpg"): self.image("logo.jpg", 160, 8, 20)
-        
-        # 1. Firmenname (Fett und groß) - Position Y=10
-        self.set_xy(10, 10)
-        self.set_font('Arial', 'B', 16)
-        self.cell(0, 10, 'INTERWARK', 0, 1, 'L')
-        
-        # 2. Name - Position Y=18
-        self.set_xy(10, 18)
-        self.set_font('Arial', '', 10)
-        self.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
-        
-        # 3. Straße - Position Y=23 (HIER HABE ICH ES ERZWINGEN)
-        self.set_xy(10, 23)
-        self.cell(0, 5, 'Hohe Str. 26', 0, 1, 'L')
-        
-        # 4. Stadt - Position Y=28
-        self.set_xy(10, 28)
-        self.cell(0, 5, '26725 Emden', 0, 1, 'L')
-        
-        # 5. E-Mail - Position Y=33
-        self.set_xy(10, 33)
-        self.cell(0, 5, 'info@interwark.de', 0, 1, 'L')
-        
-        # Trennlinie (Nach unten geschoben auf Y=42)
-        self.set_draw_color(200,200,200)
-        self.line(10, 42, 200, 42) 
+        pass 
 
     def footer(self):
         self.set_y(-30)
@@ -81,13 +70,41 @@ def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
     
-    # --- WICHTIG: TEXT ERST AB 55mm STARTEN DAMIT OBEN PLATZ IST ---
-    pdf.set_y(55) 
-    # ---------------------------------------------------------------
-    
+    # Hilfsfunktion für Text-Encoding
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
     
-    # Empfänger
+    # ---------------------------------------------------------
+    # 1. KOPFZEILE (MANUELL) - Das muss jetzt sichtbar sein!
+    # ---------------------------------------------------------
+    
+    # Logo (falls vorhanden) rechts oben
+    if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
+    elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
+
+    # Deine Adresse oben links (explizit gesetzt)
+    pdf.set_y(10) # Cursor ganz nach oben setzen
+    pdf.set_font('Arial', 'B', 16)
+    pdf.cell(0, 8, 'INTERWARK', 0, 1, 'L')
+    
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 1, 'L')
+    pdf.cell(0, 5, 'Hohe Str. 26', 0, 1, 'L')
+    pdf.cell(0, 5, '26725 Emden', 0, 1, 'L')
+    pdf.cell(0, 5, 'info@interwark.de', 0, 1, 'L')
+    
+    # Trennlinie
+    pdf.ln(5)
+    y_linie = pdf.get_y()
+    pdf.set_draw_color(200,200,200)
+    pdf.line(10, y_linie, 200, y_linie)
+    
+    # ---------------------------------------------------------
+    # 2. HAUPTTEIL
+    # ---------------------------------------------------------
+    
+    pdf.ln(10) # Abstand nach der Linie
+    
+    # Empfänger (Kunde)
     pdf.set_font("Arial", 'B', 12)
     pdf.cell(0, 5, txt(f"Kunde: {daten.get('kunde_name')}"), 0, 1)
     pdf.set_font("Arial", '', 12)
@@ -105,7 +122,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(0, 5, txt(f"Projekt/Betreff: {daten.get('problem_titel')}"), 0, 1)
     pdf.ln(10)
     
-    # Tabelle
+    # Tabelle Header
     pdf.set_fill_color(240, 240, 240)
     pdf.set_font("Arial", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1)
@@ -114,6 +131,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
     pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
+    # Positionen
     pdf.set_font("Arial", '', 10)
     i = 1
     for pos in daten.get('positionen', []):
@@ -143,6 +161,7 @@ def erstelle_bericht_pdf(daten):
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R')
     pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
+    # Abschluss
     pdf.ln(15)
     pdf.set_font("Arial", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
