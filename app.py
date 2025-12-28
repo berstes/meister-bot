@@ -155,6 +155,11 @@ google_json_raw = st.secrets.get("google_json", "")
 # --- SEITENLEISTE MIT MODUS-WAHL ---
 with st.sidebar:
     st.header("⚙️ Einstellungen")
+
+    # In der Sidebar einfügen:
+if st.sidebar.button("🔄 App neu laden / Reset"):
+    st.cache_data.clear()
+    st.rerun()
     
     modus = st.radio(
         "Modus wählen:",
@@ -417,3 +422,4 @@ if uploaded_file and api_key:
                     
             except Exception as e:
                 st.error(f"Fehler: {e}")
+
