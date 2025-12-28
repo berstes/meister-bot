@@ -1,21 +1,3 @@
-Das ist wirklich verrückt! Es tut mir leid, dass wir hier so kämpfen. Da ich nicht sehen kann, was auf deinem Bildschirm passiert, müssen wir jetzt die "Holzhammer-Methode" anwenden.
-
-Wir entfernen jetzt jeden möglichen Störfaktor:
-
-Wir wechseln die Schriftart auf Helvetica (das ist der Standard, der immer funktioniert).
-
-Wir malen graue Hintergründe hinter deinen Text.
-
-Wenn du graue Balken siehst, aber keinen Text -> Dann ist die Schriftfarbe weiß (warum auch immer).
-
-Wenn du gar nichts siehst -> Dann wird der Bereich von etwas anderem (z.B. einem riesigen, unsichtbaren Logo) überdeckt.
-
-Wir zeichnen das Logo erst ganz zum Schluss, damit es nichts verdecken kann.
-
-Hier ist der Code. Bitte noch einmal alles löschen und einfügen.
-
-Python
-
 import streamlit as st
 import os
 import json
@@ -369,3 +351,4 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
