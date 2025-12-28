@@ -1,13 +1,3 @@
-Das ist gut! Das bedeutet, dass der Code vorhin funktioniert hat und wir das Problem mit der Anzeige gelöst haben. Dass da noch "TEST" steht, liegt nur daran, dass du gerade noch den "Test-Code" von vorhin ausführst.
-
-Jetzt tauschen wir diesen "Test-Code" gegen den finalen, sauberen Code aus.
-
-Damit verschwindet das "NEUE VERSION - TEST" und es steht wieder ganz professionell "MeisterBot" dort. Auch der PDF-Name ist dann wieder sauber.
-
-Hier ist der finale Code (Bitte alles löschen, diesen einfügen und "Rerun" klicken):
-
-Python
-
 import streamlit as st
 import os
 import json
@@ -332,3 +322,4 @@ if uploaded_file and api_key:
                 
         except Exception as e:
             st.error(f"Ein Fehler ist aufgetreten: {e}")
+
