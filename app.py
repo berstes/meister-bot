@@ -1,6 +1,7 @@
 import streamlit as st
 import os
 import json
+import time
 import pandas as pd
 import gspread
 import smtplib
@@ -36,11 +37,10 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
-# --- 2. PDF KLASSE (Nur Footer) ---
+# --- 2. PDF KLASSE ---
 class PDF(FPDF):
     def header(self):
-        # Wir lassen den Header hier LEER.
-        # Wir schreiben alles manuell im Hauptteil, das ist sicherer.
+        # Header bleibt leer, wir machen alles manuell, das ist sicherer
         pass
 
     def footer(self):
@@ -49,7 +49,7 @@ class PDF(FPDF):
         self.set_text_color(128)
         self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
 
-# --- 3. BERICHT ERSTELLEN (LINEARER ABLAUF) ---
+# --- 3. BERICHT ERSTELLEN (ABSOLUTE POSITIONIERUNG) ---
 def erstelle_bericht_pdf(daten):
     pdf = PDF()
     pdf.add_page()
@@ -57,38 +57,45 @@ def erstelle_bericht_pdf(daten):
     # Hilfsfunktion
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # --- ABSCHNITT 1: DEINE FIRMENDATEN (Linear untereinander) ---
+    # --- KOPFBEREICH ERZWINGEN ---
     
-    # Falls Logo da ist, malen wir es rechts hin, stört den Text links nicht
+    # 1. Logo (rechts oben)
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
 
-    # Cursor auf Start setzen (10mm von oben)
-    pdf.set_y(10)
+    # 2. Adresse (Links oben) - Wir setzen den Stift für jede Zeile neu an!
     pdf.set_text_color(0, 0, 0) # Schwarz
 
-    # 1. Firmenname (Fett)
+    # Interwark (Y=10)
+    pdf.set_xy(10, 10)
     pdf.set_font('Arial', 'B', 16)
-    # ln=1 bedeutet: Nach dem Text Zeilenumbruch machen
-    pdf.cell(0, 8, 'INTERWARK', ln=1) 
+    pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
 
-    # 2. Adresse (Normal)
+    # Name (Y=20)
+    pdf.set_xy(10, 20)
     pdf.set_font('Arial', '', 10)
-    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', ln=1)
-    pdf.cell(0, 5, 'Hohe Str. 26', ln=1)
-    pdf.cell(0, 5, '26725 Emden', ln=1)
-    pdf.cell(0, 5, 'info@interwark.de', ln=1)
+    pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
+
+    # Straße (Y=25)
+    pdf.set_xy(10, 25)
+    pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
+
+    # Stadt (Y=30)
+    pdf.set_xy(10, 30)
+    pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
+
+    # Mail (Y=35)
+    pdf.set_xy(10, 35)
+    pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
     
-    # 3. Linie (etwas Abstand lassen)
-    pdf.ln(5) 
-    # Linie von ganz links (10) bis ganz rechts (200) auf aktueller Höhe (get_y)
-    y = pdf.get_y()
+    # Linie (Y=45)
     pdf.set_draw_color(150, 150, 150)
-    pdf.line(10, y, 200, y)
+    pdf.line(10, 45, 200, 45)
     
-    # --- ABSCHNITT 2: KUNDE & INHALT ---
+    # --- ENDE KOPF, BEGINN INHALT ---
     
-    pdf.ln(10) # 1cm Abstand nach der Linie
+    # Wir springen weit nach unten (auf 60mm), damit sicher nichts überlappt
+    pdf.set_xy(10, 60)
     
     # Kunde
     pdf.set_font("Arial", 'B', 12)
@@ -97,7 +104,7 @@ def erstelle_bericht_pdf(daten):
     pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
     # Titel
-    pdf.ln(15) 
+    pdf.ln(10) 
     pdf.set_font("Arial", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
@@ -155,7 +162,10 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font("Arial", '', 10)
     pdf.multi_cell(0, 5, txt("Dieser Arbeitsbericht dient als Leistungsnachweis."))
     
-    dateiname = f"Arbeitsbericht_{rechnungs_nr}.pdf"
+    # TRICK: Dateiname mit Uhrzeit, um Cache zu umgehen
+    timestamp = int(time.time())
+    dateiname = f"Arbeitsbericht_{rechnungs_nr}_{timestamp}.pdf"
+    
     pdf.output(dateiname)
     return dateiname
 
@@ -339,8 +349,9 @@ if uploaded_file and api_key:
             st.markdown("### 📥 Downloads")
             c_dl1, c_dl2 = st.columns(2)
             
+            # HIER NUTZEN WIR DEN NEUEN DATEINAMEN FÜR DEN BUTTON
             with open(pdf_datei, "rb") as f:
-                c_dl1.download_button("📄 PDF Bericht", f, f"Bericht_{daten.get('rechnungs_nr')}.pdf", "application/pdf")
+                c_dl1.download_button("📄 PDF Bericht", f, pdf_datei, "application/pdf")
             
             c_dl2.download_button("📊 DATEV CSV", datev_csv_content, f"DATEV_{daten.get('rechnungs_nr')}.csv", "text/csv")
                 
