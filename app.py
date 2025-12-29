@@ -3,7 +3,7 @@ import os
 import json
 import time
 import smtplib
-from datetime import datetime, timedelta
+from datetime import datetime
 
 # --- 1. SICHERHEITS-START ---
 api_key = None
@@ -51,7 +51,6 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     
-    # NEUER MODUS "CHEF-DASHBOARD" ALS ERSTES!
     modus = st.radio("Modus:", ("Chef-Dashboard", "Bericht & DATEV erstellen", "Auftrag annehmen"))
     st.markdown("---")
     
@@ -87,62 +86,76 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_statistik_daten():
-    """Lädt und berechnet die Statistik aus dem Google Sheet."""
+    """Lädt Statistik robust (ignoriert leere Spalten & Leerzeichen)."""
     if not google_creds: return None, None, None, None
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         
-        # 1. Rechnungen laden (Blatt 1)
+        # Wir laden ALLES als einfache Liste (sicherer als get_all_records)
         ws_rechnungen = sh.get_worksheet(0)
-        data = ws_rechnungen.get_all_records()
-        df = pd.DataFrame(data)
+        alle_werte = ws_rechnungen.get_all_values()
         
-        # Datentypen putzen
-        # Wir suchen Spalten die "Datum" und "Brutto" heißen könnten
-        # Falls Header anders heißen, passen wir das hier an
+        if len(alle_werte) < 2:
+            return "Noch keine Daten im Sheet.", None, None, None
+            
+        # Header bereinigen (Leerzeichen weg)
+        raw_headers = alle_werte[0]
+        headers = [h.strip() for h in raw_headers]
+        
+        # Daten laden
+        data = alle_werte[1:]
+        df = pd.DataFrame(data, columns=headers)
+        
+        # Prüfen ob wichtige Spalten da sind
         if 'Datum' not in df.columns or 'Brutto' not in df.columns:
-            return "Fehler: Spalten 'Datum' oder 'Brutto' nicht gefunden.", None, None, None
+            gefunden = ", ".join(df.columns)
+            return f"Fehler: Spalten 'Datum' oder 'Brutto' fehlen.\nGefundene Spalten: {gefunden}", None, None, None
 
-        # Datum konvertieren
+        # Datum konvertieren (Fehlerhafte Daten werden ignoriert -> coerce)
         df['Datum'] = pd.to_datetime(df['Datum'], format='%d.%m.%Y', errors='coerce')
         
-        # Geld konvertieren (1.234,56 -> 1234.56)
-        # Wir entfernen Tausenderpunkte und ersetzen Komma durch Punkt
+        # Leere Datumsangaben rauswerfen
+        df = df.dropna(subset=['Datum'])
+
+        # Geld konvertieren
         def putze_geld(x):
-            if isinstance(x, (int, float)): return float(x)
             if not isinstance(x, str): return 0.0
-            return float(x.replace('.', '').replace(',', '.'))
+            # Entferne alles was keine Zahl, Komma oder Minus ist
+            sauber = x.replace('€', '').replace('EUR', '').strip()
+            # Deutsch zu Englisch (1.000,00 -> 1000.00)
+            sauber = sauber.replace('.', '').replace(',', '.')
+            try:
+                return float(sauber)
+            except:
+                return 0.0
             
         df['Brutto_Zahl'] = df['Brutto'].apply(putze_geld)
         
-        # --- BERECHNUNGEN ---
+        # Berechnungen
         heute = pd.Timestamp.now()
         dieser_monat = heute.month
         dieses_jahr = heute.year
         
-        # Umsatz dieser Monat
         df_monat = df[(df['Datum'].dt.month == dieser_monat) & (df['Datum'].dt.year == dieses_jahr)]
         umsatz_monat = df_monat['Brutto_Zahl'].sum()
         
-        # Anzahl Aufträge heute
         anzahl_heute = len(df[df['Datum'].dt.date == heute.date()])
         
-        # Anzahl Aufträge diese Woche
-        # Wir nutzen ISO Kalenderwoche
         aktuelle_kw = heute.isocalendar()[1]
         df['KW'] = df['Datum'].dt.isocalendar().week
         anzahl_woche = len(df[(df['KW'] == aktuelle_kw) & (df['Datum'].dt.year == dieses_jahr)])
         
-        # Verlauf letzte 6 Monate für Chart
-        # Wir gruppieren nach Monat (z.B. "2025-01")
+        # Chart Daten
         df['Monat_Jahr'] = df['Datum'].dt.strftime('%Y-%m')
+        # Sortieren damit der Chart chronologisch ist
+        df = df.sort_values('Datum')
         chart_data = df.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
         
         return umsatz_monat, anzahl_heute, anzahl_woche, chart_data
 
     except Exception as e:
-        return f"Fehler: {e}", None, None, None
+        return f"Fehler bei Statistik: {e}", None, None, None
 
 def lade_kunden_live():
     if not google_creds: return "Keine Cloud-Verbindung."
@@ -258,6 +271,7 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
+    # TITEL: ARBEITSBERICHT
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
@@ -345,7 +359,6 @@ if modus == "Chef-Dashboard":
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"):
                 st.error(umsatz)
             else:
-                # 3 dicke Zahlen nebeneinander
                 k1, k2, k3 = st.columns(3)
                 k1.metric("Umsatz (Monat)", f"{umsatz:,.2f} €".replace(",", "X").replace(".", ",").replace("X", "."))
                 k2.metric("Aufträge (Heute)", str(anzahl_heute))
