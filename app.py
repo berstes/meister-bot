@@ -30,7 +30,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot 3.1", page_icon="📊")
+st.set_page_config(page_title="MeisterBot 3.2", page_icon="🛡️")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -86,86 +86,76 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_statistik_daten():
-    """Lädt Statistik robust (ignoriert leere Spalten & Leerzeichen)."""
-    if not google_creds: return None, None, None, None
+    """Lädt Statistik extrem robust und fehlertolerant."""
+    if not google_creds: return None, 0, 0, None
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         
-        # Wir laden ALLES als einfache Liste (sicherer als get_all_records)
         ws_rechnungen = sh.get_worksheet(0)
         alle_werte = ws_rechnungen.get_all_values()
         
         if len(alle_werte) < 2:
-            return "Noch keine Daten im Sheet.", None, None, None
+            return "LEER", 0, 0, None
             
-        # Header bereinigen (Leerzeichen weg)
+        # Header bereinigen (Leerzeichen weg, alles kleinschreiben für Vergleich)
         raw_headers = alle_werte[0]
-        headers = [h.strip() for h in raw_headers]
+        headers_clean = [h.strip() for h in raw_headers]
         
-        # Daten laden
-        data = alle_werte[1:]
-        df = pd.DataFrame(data, columns=headers)
+        # DataFrame erstellen
+        df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
         
-        # Prüfen ob wichtige Spalten da sind
-        if 'Datum' not in df.columns or 'Brutto' not in df.columns:
-            gefunden = ", ".join(df.columns)
-            return f"Fehler: Spalten 'Datum' oder 'Brutto' fehlen.\nGefundene Spalten: {gefunden}", None, None, None
+        # Intelligente Spaltensuche (egal ob "Datum " oder "Rechnungs-Datum")
+        col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
+        col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
+        
+        if not col_datum or not col_brutto:
+            return f"Fehler: Spalten nicht erkannt. Gefunden: {list(df.columns)}", 0, 0, None
 
-        # Datum konvertieren (Fehlerhafte Daten werden ignoriert -> coerce)
-        df['Datum'] = pd.to_datetime(df['Datum'], format='%d.%m.%Y', errors='coerce')
-        
-        # Leere Datumsangaben rauswerfen
-        df = df.dropna(subset=['Datum'])
+        # Datum konvertieren
+        df['Datum_Clean'] = pd.to_datetime(df[col_datum], format='%d.%m.%Y', errors='coerce')
+        df = df.dropna(subset=['Datum_Clean']) # Ungültige Zeilen weg
 
         # Geld konvertieren
         def putze_geld(x):
             if not isinstance(x, str): return 0.0
-            # Entferne alles was keine Zahl, Komma oder Minus ist
             sauber = x.replace('€', '').replace('EUR', '').strip()
-            # Deutsch zu Englisch (1.000,00 -> 1000.00)
             sauber = sauber.replace('.', '').replace(',', '.')
-            try:
-                return float(sauber)
-            except:
-                return 0.0
+            try: return float(sauber)
+            except: return 0.0
             
-        df['Brutto_Zahl'] = df['Brutto'].apply(putze_geld)
+        df['Brutto_Zahl'] = df[col_brutto].apply(putze_geld)
         
         # Berechnungen
         heute = pd.Timestamp.now()
-        dieser_monat = heute.month
-        dieses_jahr = heute.year
-        
-        df_monat = df[(df['Datum'].dt.month == dieser_monat) & (df['Datum'].dt.year == dieses_jahr)]
+        df_monat = df[(df['Datum_Clean'].dt.month == heute.month) & (df['Datum_Clean'].dt.year == heute.year)]
         umsatz_monat = df_monat['Brutto_Zahl'].sum()
         
-        anzahl_heute = len(df[df['Datum'].dt.date == heute.date()])
+        anzahl_heute = len(df[df['Datum_Clean'].dt.date == heute.date()])
         
         aktuelle_kw = heute.isocalendar()[1]
-        df['KW'] = df['Datum'].dt.isocalendar().week
-        anzahl_woche = len(df[(df['KW'] == aktuelle_kw) & (df['Datum'].dt.year == dieses_jahr)])
+        df['KW'] = df['Datum_Clean'].dt.isocalendar().week
+        anzahl_woche = len(df[(df['KW'] == aktuelle_kw) & (df['Datum_Clean'].dt.year == heute.year)])
         
-        # Chart Daten
-        df['Monat_Jahr'] = df['Datum'].dt.strftime('%Y-%m')
-        # Sortieren damit der Chart chronologisch ist
-        df = df.sort_values('Datum')
+        # Chart
+        df['Monat_Jahr'] = df['Datum_Clean'].dt.strftime('%Y-%m')
+        df = df.sort_values('Datum_Clean')
         chart_data = df.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
         
         return umsatz_monat, anzahl_heute, anzahl_woche, chart_data
 
     except Exception as e:
-        return f"Fehler bei Statistik: {e}", None, None, None
+        return f"Fehler: {str(e)}", 0, 0, None
 
 def lade_kunden_live():
-    if not google_creds: return "Keine Cloud-Verbindung."
+    if not google_creds: return "Keine Cloud."
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         try: ws = sh.worksheet("Kunden")
         except: return "Hinweis: Tabellenblatt 'Kunden' fehlt."
         alle_daten = ws.get_all_values()
-        if len(alle_daten) < 2: return "Keine Kunden gespeichert."
+        if len(alle_daten) < 2: return "Keine Kunden."
         kunden_text = "BEKANNTE KUNDEN:\n"
         for zeile in alle_daten[1:]:
             if len(zeile) >= 1:
@@ -177,8 +167,7 @@ def lade_kunden_live():
                 anrede = zeile[5] if len(zeile) > 5 else "" 
                 kunden_text += f"- Name: {name} | Anrede: {anrede} | Adresse: {strasse}, {plz} {ort} | KdNr: {kd_nr}\n"
         return kunden_text
-    except Exception as e:
-        return f"Fehler Kunden-DB: {e}"
+    except Exception as e: return f"Fehler DB: {e}"
 
 def lade_preise_live():
     if not google_creds: return "Preise: Standard"
@@ -197,17 +186,17 @@ def audio_zu_text(pfad):
 
 def text_zu_daten(txt, preise, kunden_db):
     sys = f"""
-    Du bist Buchhalter (Interwark).
+    Du bist Buchhalter.
     PREISE: {preise}
-    KUNDEN-DB: {kunden_db}
-    AUFGABE: Suche Kunde. Erstelle JSON für einen Arbeitsbericht.
+    KUNDEN: {kunden_db}
+    AUFGABE: JSON erstellen.
     Format: {{'anrede': 'Herr/Frau', 'kunde_name': 'Name', 'adresse': 'Str, PLZ Ort', 'kundennummer': '1000', 'problem_titel': 'Betreff', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}
     """
     res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
     return json.loads(res.choices[0].message.content)
 
 def text_zu_auftrag(txt, kunden_db):
-    sys = f"Du bist Sekretär. KUNDEN-DB: {kunden_db}. Extrahiere JSON: {{'kunde_name':'Name', 'anrede':'Herr/Frau', 'adresse':'Adr', 'kontakt':'Tel', 'problem':'Prob', 'termin':'Wann'}}"
+    sys = f"Du bist Sekretär. KUNDEN: {kunden_db}. JSON: {{'kunde_name':'Name', 'anrede':'Herr/Frau', 'adresse':'Adr', 'kontakt':'Tel', 'problem':'Prob', 'termin':'Wann'}}"
     res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
     return json.loads(res.choices[0].message.content)
 
@@ -243,7 +232,6 @@ def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
-    # KOPF
     pdf.set_text_color(0, 0, 0)
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
@@ -256,7 +244,6 @@ def erstelle_bericht_pdf(daten):
     pdf.set_xy(10, 33); pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
     pdf.set_draw_color(0, 0, 0); pdf.line(10, 42, 200, 42)
     
-    # INHALT
     pdf.set_y(55)
     pdf.set_font("Helvetica", 'B', 12)
     anrede = daten.get('anrede', '')
@@ -271,7 +258,6 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # TITEL: ARBEITSBERICHT
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
@@ -354,18 +340,29 @@ if modus == "Chef-Dashboard":
     
     if api_key and google_creds:
         with st.spinner("Lade Zahlen..."):
+            
+            # Die Funktion ist jetzt sicher: Sie gibt immer Zahlen zurück, nie None!
             umsatz, anzahl_heute, anzahl_woche, chart_data = lade_statistik_daten()
             
+            # Falls ein Fehlertext zurückkam (z.B. "Fehler: Spalten fehlen")
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"):
                 st.error(umsatz)
+                st.info("Bitte prüfe die Spaltennamen in Google Sheets (z.B. 'Datum' und 'Brutto').")
+            elif isinstance(umsatz, str) and umsatz == "LEER":
+                st.info("Noch keine Rechnungen geschrieben.")
             else:
+                # Hier kommen jetzt garantiert Zahlen an -> KEIN ABSTURZ MEHR!
                 k1, k2, k3 = st.columns(3)
+                
+                # Sicherstellen, dass Umsatz eine Zahl ist, bevor formatiert wird
+                if not isinstance(umsatz, (int, float)): umsatz = 0.0
+                
                 k1.metric("Umsatz (Monat)", f"{umsatz:,.2f} €".replace(",", "X").replace(".", ",").replace("X", "."))
                 k2.metric("Aufträge (Heute)", str(anzahl_heute))
                 k3.metric("Aufträge (Woche)", str(anzahl_woche))
                 
                 st.markdown("---")
-                st.subheader("📈 Umsatzverlauf (letzte 6 Monate)")
+                st.subheader("📈 Umsatzverlauf")
                 if chart_data is not None and not chart_data.empty:
                     st.bar_chart(chart_data)
                 else:
@@ -411,7 +408,7 @@ elif modus == "Bericht & DATEV erstellen":
                     if sende_mail(pdf, dat): st.toast("📧 Mail raus")
             except Exception as e: st.error(f"Fehler: {e}")
 
-else: # AUFTRAG ANNEHMEN
+else: 
     st.caption("Modus: 🟠 Neuen Auftrag anlegen")
     f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
 
