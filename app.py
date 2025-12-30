@@ -31,7 +31,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.9.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.9.1", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -49,7 +49,6 @@ with st.sidebar:
     st.header("⚙️ Einstellungen")
     if st.button("🔄 App Reset / Neu laden"):
         st.cache_data.clear()
-        # Session State löschen für kompletten Reset
         for key in list(st.session_state.keys()):
             del st.session_state[key]
         st.rerun()
@@ -94,49 +93,35 @@ def lade_statistik_daten():
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
-        
         ws_rechnungen = sh.get_worksheet(0)
         alle_werte = ws_rechnungen.get_all_values()
-        
         if len(alle_werte) < 2: return 0.0, 0, 0, None
-            
         raw_headers = alle_werte[0]
         headers_clean = [str(h).strip() for h in raw_headers]
         df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
-        
         col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
         col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
-        
         if not col_datum or not col_brutto: return 0.0, 0, 0, None
-
         df['Datum_Clean'] = pd.to_datetime(df[col_datum], format='%d.%m.%Y', errors='coerce')
         df = df.dropna(subset=['Datum_Clean']) 
-
         def putze_geld(x):
             if not isinstance(x, str): return 0.0
             sauber = x.replace('€', '').replace('EUR', '').strip()
             sauber = sauber.replace('.', '').replace(',', '.')
             try: return float(sauber)
             except: return 0.0
-            
         df['Brutto_Zahl'] = df[col_brutto].apply(putze_geld)
-        
         heute = pd.Timestamp.now()
         df_monat = df[(df['Datum_Clean'].dt.month == heute.month) & (df['Datum_Clean'].dt.year == heute.year)]
         umsatz_monat = df_monat['Brutto_Zahl'].sum()
-        
         anzahl_heute = len(df[df['Datum_Clean'].dt.date == heute.date()])
-        
         aktuelle_kw = heute.isocalendar()[1]
         df['KW'] = df['Datum_Clean'].dt.isocalendar().week
         anzahl_woche = len(df[(df['KW'] == aktuelle_kw) & (df['Datum_Clean'].dt.year == heute.year)])
-        
         df['Monat_Jahr'] = df['Datum_Clean'].dt.strftime('%Y-%m')
         df = df.sort_values('Datum_Clean')
         chart_data = df.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
-        
         return umsatz_monat, anzahl_heute, anzahl_woche, chart_data
-
     except Exception as e: return 0.0, 0, 0, None
 
 def lade_kunden_live():
@@ -204,12 +189,9 @@ def hole_nr():
     monat = now.strftime("%m")
     prefix = f"B-{jahr}-{monat}"
     start_nr = f"{prefix}-01"
-
     if not google_creds: return start_nr
     try:
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        ws = sh.get_worksheet(0)
+        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
         col = ws.col_values(1)
         if not col or len(col) < 2: return start_nr
         last_entry = col[-1]
@@ -238,53 +220,27 @@ def baue_datev_datei(daten):
 
 class PDF(FPDF):
     def header(self): pass
-    
     def footer(self):
-        # 1. Positionierung & Hintergrund
         self.set_y(-35)
         self.set_fill_color(248, 248, 248) 
         self.rect(0, 297-35, 210, 35, 'F') 
-        
-        # 2. Farben & Hilfsfunktion
         c_head = (20, 80, 160) # Blau
         c_text = (50, 50, 50)  # Dunkelgrau
         def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
-        
         y_top = 297 - 30 
         
-        # --- SPALTE 1: Firma ---
-        self.set_xy(10, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("Firma"), 0, 2, 'L')
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
+        # --- FUSSZEILE GRÖSSEN ---
+        self.set_xy(10, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("Firma"), 0, 2, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
         
-        # --- SPALTE 2: KONTAKT ---
-        self.set_xy(60, y_top) 
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("KONTAKT"), 0, 2, 'L')
+        self.set_xy(60, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("KONTAKT"), 0, 2, 'L')
+        self.set_xy(60, self.get_y()); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
         
-        self.set_xy(60, self.get_y()) 
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
+        self.set_xy(110, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 2, 'L')
+        self.set_xy(110, self.get_y()); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
         
-        # --- SPALTE 3: BANKVERBINDUNG ---
-        self.set_xy(110, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 2, 'L')
-        
-        self.set_xy(110, self.get_y()) 
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
-        
-        # --- SPALTE 4: STEUERNUMMER ---
-        self.set_xy(160, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 2, 'L')
-        
-        self.set_xy(160, self.get_y()) 
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
+        self.set_xy(160, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 2, 'L')
+        self.set_xy(160, self.get_y()); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
 
 def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
@@ -310,10 +266,7 @@ def erstelle_bericht_pdf(daten):
     
     kd = daten.get('kundennummer', '')
     if kd: 
-        pdf.set_font("Helvetica", '', 9)
-        pdf.cell(0, 5, txt(f"Kundennr.: {kd}"), ln=1)
-        pdf.set_font("Helvetica", 'B', 12)
-        
+        pdf.set_font("Helvetica", '', 9); pdf.cell(0, 5, txt(f"Kundennr.: {kd}"), ln=1); pdf.set_font("Helvetica", 'B', 12)
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 15)
@@ -328,8 +281,7 @@ def erstelle_bericht_pdf(daten):
     
     pdf.set_fill_color(240, 240, 240); pdf.set_font("Helvetica", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1); pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
-    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1); pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1)
-    pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
+    pdf.cell(20, 8, "Menge", 1, 0, 'C', 1); pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1); pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
     
     pdf.set_font("Helvetica", '', 10); i = 1
     for pos in daten.get('positionen', []):
@@ -358,8 +310,7 @@ def speichere_rechnung(d):
     if not google_creds: return False
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        if not ws.get_all_values(): 
-            ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr"])
+        if not ws.get_all_values(): ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr"])
         ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',','), d.get('kundennummer', '')])
         return True
     except: return False
@@ -388,41 +339,24 @@ def sende_mail(pfad, d):
     except: return False
 
 def berechne_summen(df_pos):
-    """Berechnet Netto, MwSt und Brutto aus dem DataFrame neu."""
-    summe_netto = 0.0
-    positions_liste = []
-    
+    summe_netto = 0.0; positions_liste = []
     for _, row in df_pos.iterrows():
         try:
-            m = float(row['menge'])
-            e = float(row['einzel_netto'])
-            g = m * e
-            summe_netto += g
-            
-            # Zeile für PDF aufbereiten
-            positions_liste.append({
-                "text": row['text'],
-                "menge": m,
-                "einzel_netto": e,
-                "gesamt_netto": g
-            })
+            m = float(row['menge']); e = float(row['einzel_netto']); g = m * e; summe_netto += g
+            positions_liste.append({"text": row['text'], "menge": m, "einzel_netto": e, "gesamt_netto": g})
         except: pass
-        
-    mwst = summe_netto * 0.19
-    brutto = summe_netto + mwst
+    mwst = summe_netto * 0.19; brutto = summe_netto + mwst
     return positions_liste, summe_netto, mwst, brutto
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.9.0")
+st.title("Auftrags- und Arbeitsberichte App 3.9.1")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
-    
     if api_key and google_creds:
         with st.spinner("Lade Zahlen..."):
             umsatz, anzahl_heute, anzahl_woche, chart_data = lade_statistik_daten()
-            if isinstance(umsatz, str) and umsatz.startswith("Fehler"):
-                st.error(umsatz)
+            if isinstance(umsatz, str) and umsatz.startswith("Fehler"): st.error(umsatz)
             else:
                 k1, k2, k3 = st.columns(3)
                 if not isinstance(umsatz, (int, float)): umsatz = 0.0
@@ -431,29 +365,21 @@ if modus == "Chef-Dashboard":
                 k3.metric("Aufträge (Woche)", str(anzahl_woche))
                 st.markdown("---")
                 st.subheader("📈 Umsatzverlauf")
-                if chart_data is not None and not chart_data.empty:
-                    st.bar_chart(chart_data)
-                else:
-                    st.info("Noch nicht genug Daten für ein Diagramm.")
-    else:
-        st.warning("Bitte erst API Keys eintragen.")
+                if chart_data is not None and not chart_data.empty: st.bar_chart(chart_data)
+                else: st.info("Noch nicht genug Daten für ein Diagramm.")
+    else: st.warning("Bitte erst API Keys eintragen.")
 
 elif modus == "Bericht & DATEV erstellen":
     st.caption("Modus: 🔵 Arbeitsbericht erstellen")
-    
-    # Session State initialisieren
-    if 'temp_data' not in st.session_state:
-        st.session_state.temp_data = None
-    if 'audio_processed' not in st.session_state:
-        st.session_state.audio_processed = False
+    if 'temp_data' not in st.session_state: st.session_state.temp_data = None
+    if 'audio_processed' not in st.session_state: st.session_state.audio_processed = False
 
     f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
 
-    # 1. SCHRITT: AUDIO VERARBEITEN (nur einmal)
+    # 1. SCHRITT: AUDIO VERARBEITEN
     if f and api_key and client and not st.session_state.audio_processed:
         dateiendung = f.name.split('.')[-1]
         temp_filename = f"temp_audio.{dateiendung}"
-        
         with st.spinner("⏳ Analysiere Audio..."):
             with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
@@ -462,18 +388,13 @@ elif modus == "Bericht & DATEV erstellen":
                 kunden = lade_kunden_live() 
                 dat = text_zu_daten(txt, preise, kunden)
                 dat['rechnungs_nr'] = hole_nr()
-                
-                # Daten in Session State speichern
-                st.session_state.temp_data = dat
-                st.session_state.audio_processed = True
-                st.rerun() # Seite neu laden, um Editor anzuzeigen
+                st.session_state.temp_data = dat; st.session_state.audio_processed = True; st.rerun()
             except Exception as e: st.error(f"Fehler: {e}")
 
     # 2. SCHRITT: VORSCHAU & EDITOR
     if st.session_state.temp_data:
         st.markdown("### 📝 Vorschau & Korrektur")
         dat = st.session_state.temp_data
-        
         c1, c2 = st.columns(2)
         neuer_kunde = c1.text_input("Kunde", value=dat.get('kunde_name', ''))
         neue_nr = c2.text_input("Bericht Nr.", value=dat.get('rechnungs_nr', ''))
@@ -481,76 +402,58 @@ elif modus == "Bericht & DATEV erstellen":
         neuer_titel = st.text_input("Betreff / Arbeit", value=dat.get('problem_titel', ''))
 
         st.markdown("#### Positionen bearbeiten")
-        # Tabelle für Positionen
         df_pos = pd.DataFrame(dat.get('positionen', []))
-        if 'gesamt_netto' in df_pos.columns: 
-            df_pos = df_pos.drop(columns=['gesamt_netto']) # Gesamt berechnen wir neu
-        
+        if 'gesamt_netto' in df_pos.columns: df_pos = df_pos.drop(columns=['gesamt_netto']) 
         edited_df = st.data_editor(df_pos, num_rows="dynamic", use_container_width=True)
 
         # 3. SCHRITT: FERTIGSTELLEN
         if st.button("✅ Bericht jetzt erstellen", type="primary"):
             try:
                 with st.spinner("Erstelle PDF..."):
-                    # Daten aktualisieren
                     pos_list, sum_net, sum_mwst, sum_brutto = berechne_summen(edited_df)
-                    
-                    final_data = {
-                        'rechnungs_nr': neue_nr,
-                        'kunde_name': neuer_kunde,
-                        'adresse': neue_adresse,
-                        'problem_titel': neuer_titel,
-                        'positionen': pos_list,
-                        'summe_netto': sum_net,
-                        'mwst_betrag': sum_mwst,
-                        'summe_brutto': sum_brutto,
-                        'anrede': dat.get('anrede', ''),
-                        'kundennummer': dat.get('kundennummer', '')
-                    }
-                    
-                    # PDF & CSV erstellen
+                    final_data = {'rechnungs_nr': neue_nr, 'kunde_name': neuer_kunde, 'adresse': neue_adresse, 'problem_titel': neuer_titel, 'positionen': pos_list, 'summe_netto': sum_net, 'mwst_betrag': sum_mwst, 'summe_brutto': sum_brutto, 'anrede': dat.get('anrede', ''), 'kundennummer': dat.get('kundennummer', '')}
                     pdf = erstelle_bericht_pdf(final_data)
                     csv = baue_datev_datei(final_data)
-                    
-                    # Speichern
                     gespeichert = speichere_rechnung(final_data)
                     mail_gesendet = False
-                    if email_sender:
-                        mail_gesendet = sende_mail(pdf, final_data)
+                    if email_sender: mail_gesendet = sende_mail(pdf, final_data)
 
-                    # --- ERGEBNIS ANZEIGEN ---
                     st.success("Erledigt!")
                     if gespeichert: st.toast("Cloud gespeichert ✅")
                     if mail_gesendet: st.toast("Mail gesendet 📧")
                     
-                    # Downloads
-                    col_dl1, col_dl2 = st.columns(2)
-                    with open(pdf, "rb") as file: 
-                        col_dl1.download_button("📄 PDF laden", file, pdf, "application/pdf")
-                    col_dl2.download_button("📊 DATEV laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
-                    
                     st.markdown("---")
+                    st.markdown("### 📤 Versand & Download")
                     
-                    # --- WHATSAPP LINK ---
-                    wa_text = f"Moin {neuer_kunde}, anbei der Arbeitsbericht {neue_nr}."
-                    wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
-                    st.link_button("💬 WhatsApp Link öffnen", wa_link)
-                    st.caption("Klicke den Button, öffne WhatsApp und ziehe das PDF in den Chat.")
+                    # --- ÄNDERUNG: KLARE TRENNUNG PDF vs WHATSAPP ---
+                    c_dl, c_wa = st.columns(2)
+                    
+                    with c_dl:
+                        st.markdown("#### 1. Datei laden")
+                        with open(pdf, "rb") as file: 
+                            st.download_button("⬇️ PDF herunterladen", file, pdf, "application/pdf")
+                            
+                    with c_wa:
+                        st.markdown("#### 2. WhatsApp senden")
+                        wa_text = f"Moin {neuer_kunde}, anbei der Arbeitsbericht {neue_nr}."
+                        wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
+                        st.link_button("💬 WhatsApp öffnen", wa_link)
+                    
+                    st.info("⚠️ Hinweis: WhatsApp kann keine Dateien automatisch anhängen. Bitte das heruntergeladene PDF manuell in den Chat ziehen!")
 
-            except Exception as e:
-                st.error(f"Fehler beim Erstellen: {e}")
+                    # DATEV separat drunter
+                    with open(pdf, "rb") as f_csv:
+                        st.download_button("📊 DATEV (CSV) laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
 
-    # Button um alles abzubrechen
+            except Exception as e: st.error(f"Fehler beim Erstellen: {e}")
+
     if st.session_state.audio_processed:
         if st.button("❌ Abbrechen / Neu starten"):
-            st.session_state.temp_data = None
-            st.session_state.audio_processed = False
-            st.rerun()
+            st.session_state.temp_data = None; st.session_state.audio_processed = False; st.rerun()
 
 else: 
     st.caption("Modus: 🟠 Neuen Auftrag anlegen")
     f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
-
     if f and api_key and client:
         dateiendung = f.name.split('.')[-1]
         temp_filename = f"temp_audio.{dateiendung}"
