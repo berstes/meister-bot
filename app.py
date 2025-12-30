@@ -87,7 +87,7 @@ if api_key:
 
 def lade_statistik_daten():
     """Lädt Statistik extrem robust und fehlertolerant."""
-    if not google_creds: return None, 0, 0, None
+    if not google_creds: return 0.0, 0, 0, None
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
@@ -96,25 +96,25 @@ def lade_statistik_daten():
         alle_werte = ws_rechnungen.get_all_values()
         
         if len(alle_werte) < 2:
-            return "LEER", 0, 0, None
+            return 0.0, 0, 0, None
             
-        # Header bereinigen (Leerzeichen weg, alles kleinschreiben für Vergleich)
+        # Header bereinigen
         raw_headers = alle_werte[0]
-        headers_clean = [h.strip() for h in raw_headers]
+        headers_clean = [str(h).strip() for h in raw_headers]
         
         # DataFrame erstellen
         df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
         
-        # Intelligente Spaltensuche (egal ob "Datum " oder "Rechnungs-Datum")
+        # Suchen nach Spalten (egal ob Groß/Klein)
         col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
         col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
         
         if not col_datum or not col_brutto:
-            return f"Fehler: Spalten nicht erkannt. Gefunden: {list(df.columns)}", 0, 0, None
+            return 0.0, 0, 0, None
 
         # Datum konvertieren
         df['Datum_Clean'] = pd.to_datetime(df[col_datum], format='%d.%m.%Y', errors='coerce')
-        df = df.dropna(subset=['Datum_Clean']) # Ungültige Zeilen weg
+        df = df.dropna(subset=['Datum_Clean']) 
 
         # Geld konvertieren
         def putze_geld(x):
@@ -145,7 +145,7 @@ def lade_statistik_daten():
         return umsatz_monat, anzahl_heute, anzahl_woche, chart_data
 
     except Exception as e:
-        return f"Fehler: {str(e)}", 0, 0, None
+        return 0.0, 0, 0, None
 
 def lade_kunden_live():
     if not google_creds: return "Keine Cloud."
@@ -304,8 +304,21 @@ def speichere_rechnung(d):
     if not google_creds: return False
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        if not ws.get_all_values(): ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr"])
-        ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',','), d.get('kundennummer', '')])
+        # HIER IST DIE KORREKTUR: EXAKTE REIHENFOLGE!
+        if not ws.get_all_values(): 
+            ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr"])
+        
+        # WICHTIG: Die Reihenfolge in dieser Liste MUSS zur Reihenfolge im Sheet passen (A, B, C...)
+        ws.append_row([
+            d.get('rechnungs_nr'), # Spalte A: Nr
+            datetime.now().strftime("%d.%m.%Y"), # Spalte B: Datum
+            d.get('kunde_name'), # Spalte C: Kunde
+            d.get('problem_titel'), # Spalte D: Arbeit
+            str(d.get('summe_netto')).replace('.',','), # Spalte E: Netto
+            str(d.get('mwst_betrag')).replace('.',','), # Spalte F: MwSt
+            str(d.get('summe_brutto')).replace('.',','), # Spalte G: Brutto
+            d.get('kundennummer', '') # Spalte H: KdNr
+        ])
         return True
     except: return False
 
@@ -333,7 +346,7 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("📊 MeisterBot 3.1")
+st.title("📊 MeisterBot 3.2")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -341,20 +354,15 @@ if modus == "Chef-Dashboard":
     if api_key and google_creds:
         with st.spinner("Lade Zahlen..."):
             
-            # Die Funktion ist jetzt sicher: Sie gibt immer Zahlen zurück, nie None!
+            # Robustes Laden der Statistik
             umsatz, anzahl_heute, anzahl_woche, chart_data = lade_statistik_daten()
             
-            # Falls ein Fehlertext zurückkam (z.B. "Fehler: Spalten fehlen")
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"):
                 st.error(umsatz)
-                st.info("Bitte prüfe die Spaltennamen in Google Sheets (z.B. 'Datum' und 'Brutto').")
-            elif isinstance(umsatz, str) and umsatz == "LEER":
-                st.info("Noch keine Rechnungen geschrieben.")
             else:
-                # Hier kommen jetzt garantiert Zahlen an -> KEIN ABSTURZ MEHR!
                 k1, k2, k3 = st.columns(3)
                 
-                # Sicherstellen, dass Umsatz eine Zahl ist, bevor formatiert wird
+                # Sicherstellen, dass Umsatz eine Zahl ist
                 if not isinstance(umsatz, (int, float)): umsatz = 0.0
                 
                 k1.metric("Umsatz (Monat)", f"{umsatz:,.2f} €".replace(",", "X").replace(".", ",").replace("X", "."))
