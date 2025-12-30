@@ -30,7 +30,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.6.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.7.0", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -248,44 +248,43 @@ class PDF(FPDF):
         
         y_top = 297 - 30 
         
-        # --- ÄNDERUNG: Schriftgrößen verkleinert (-3) ---
-        # Überschrift: 9 -> 6
-        # Text: 8 -> 5
-        # Zeilenhöhe (cell/multi_cell): 4 -> 3
+        # --- ÄNDERUNG: Schriftgrößen angepasst (+1.5) ---
+        # Vorher: 6/5. Jetzt: 7.5/6.5
+        # Zeilenhöhe (cell/multi_cell) von 3 auf 3.5 angepasst
         
         # --- SPALTE 1: Firma ---
         self.set_xy(10, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 6)
-        self.cell(45, 3, txt("Firma"), 0, 2, 'L')
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 5)
-        self.multi_cell(45, 3, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("Firma"), 0, 2, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
         
         # --- SPALTE 2: KONTAKT ---
         self.set_xy(60, y_top) 
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 6)
-        self.cell(45, 3, txt("KONTAKT"), 0, 2, 'L')
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("KONTAKT"), 0, 2, 'L')
         
         self.set_xy(60, self.get_y()) 
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 5)
-        self.multi_cell(45, 3, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
         
         # --- SPALTE 3: BANKVERBINDUNG ---
         self.set_xy(110, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 6)
-        self.cell(45, 3, txt("BANKVERBINDUNG"), 0, 2, 'L')
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 2, 'L')
         
         self.set_xy(110, self.get_y()) 
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 5)
-        self.multi_cell(45, 3, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
         
         # --- SPALTE 4: STEUERNUMMER ---
         self.set_xy(160, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 6)
-        self.cell(45, 3, txt("STEUERNUMMER"), 0, 2, 'L')
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 2, 'L')
         
         self.set_xy(160, self.get_y()) 
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 5)
-        self.multi_cell(45, 3, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
 
 def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
@@ -317,7 +316,8 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    pdf.ln(10); pdf.set_font("Helvetica", 'B', 18)
+    # --- ÄNDERUNG: Arbeitsbericht Titel -2px (18 -> 16) ---
+    pdf.ln(10); pdf.set_font("Helvetica", 'B', 16)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
@@ -389,7 +389,7 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.6.0")
+st.title("Auftrags- und Arbeitsberichte App 3.7.0")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
