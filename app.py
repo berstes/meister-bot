@@ -30,7 +30,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.7.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.8.0", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -248,9 +248,7 @@ class PDF(FPDF):
         
         y_top = 297 - 30 
         
-        # --- ÄNDERUNG: Schriftgrößen angepasst (+1.5) ---
-        # Vorher: 6/5. Jetzt: 7.5/6.5
-        # Zeilenhöhe (cell/multi_cell) von 3 auf 3.5 angepasst
+        # --- FUSSZEILE GRÖSSEN (wie gewünscht) ---
         
         # --- SPALTE 1: Firma ---
         self.set_xy(10, y_top)
@@ -291,10 +289,12 @@ def erstelle_bericht_pdf(daten):
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
     pdf.set_text_color(0, 0, 0)
-    if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 20)
-    elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 20)
+    # --- ÄNDERUNG: Logo 15% kleiner (20 * 0.85 = 17) ---
+    if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 17)
+    elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 17)
 
-    pdf.set_font('Helvetica', 'B', 16); pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
+    # --- ÄNDERUNG: Firmenname Header 2px kleiner (16 -> 14) ---
+    pdf.set_font('Helvetica', 'B', 14); pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
     pdf.set_font('Helvetica', '', 10)
     pdf.set_xy(10, 18); pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
     pdf.set_xy(10, 23); pdf.cell(0, 5, 'Hohe Str. 28', 0, 0, 'L') 
@@ -316,8 +316,8 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # --- ÄNDERUNG: Arbeitsbericht Titel -2px (18 -> 16) ---
-    pdf.ln(10); pdf.set_font("Helvetica", 'B', 16)
+    # --- ÄNDERUNG: Arbeitsbericht Titel -1px (16 -> 15) ---
+    pdf.ln(10); pdf.set_font("Helvetica", 'B', 15)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
@@ -389,7 +389,7 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.7.0")
+st.title("Auftrags- und Arbeitsberichte App 3.8.0")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
