@@ -30,8 +30,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-# Version hochgezählt
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.3.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.4.0", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -87,7 +86,6 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_statistik_daten():
-    """Lädt Statistik extrem robust und fehlertolerant."""
     if not google_creds: return 0.0, 0, 0, None
     try:
         gc = gspread.service_account_from_dict(google_creds)
@@ -96,19 +94,16 @@ def lade_statistik_daten():
         ws_rechnungen = sh.get_worksheet(0)
         alle_werte = ws_rechnungen.get_all_values()
         
-        if len(alle_werte) < 2:
-            return 0.0, 0, 0, None
+        if len(alle_werte) < 2: return 0.0, 0, 0, None
             
         raw_headers = alle_werte[0]
         headers_clean = [str(h).strip() for h in raw_headers]
-        
         df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
         
         col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
         col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
         
-        if not col_datum or not col_brutto:
-            return 0.0, 0, 0, None
+        if not col_datum or not col_brutto: return 0.0, 0, 0, None
 
         df['Datum_Clean'] = pd.to_datetime(df[col_datum], format='%d.%m.%Y', errors='coerce')
         df = df.dropna(subset=['Datum_Clean']) 
@@ -138,8 +133,7 @@ def lade_statistik_daten():
         
         return umsatz_monat, anzahl_heute, anzahl_woche, chart_data
 
-    except Exception as e:
-        return 0.0, 0, 0, None
+    except Exception as e: return 0.0, 0, 0, None
 
 def lade_kunden_live():
     if not google_creds: return "Keine Cloud."
@@ -164,7 +158,6 @@ def lade_kunden_live():
     except Exception as e: return f"Fehler DB: {e}"
 
 def lade_preise_live():
-    """Liest Preise + Artikelnummer (Spalte C)"""
     if not google_creds: return "Preise: Standard"
     try:
         gc = gspread.service_account_from_dict(google_creds)
@@ -175,11 +168,8 @@ def lade_preise_live():
                 name = z[0]
                 preis = z[1]
                 art_nr = z[2] if len(z) > 2 else "" 
-                
-                if art_nr:
-                    txt += f"- Art. {art_nr}: {name} ({preis} EUR)\n"
-                else:
-                    txt += f"- {name}: {preis} EUR\n"
+                if art_nr: txt += f"- Art. {art_nr}: {name} ({preis} EUR)\n"
+                else: txt += f"- {name}: {preis} EUR\n"
         return txt
     except: return "Preise: Standard"
 
@@ -193,10 +183,7 @@ def text_zu_daten(txt, preise, kunden_db):
     PREISE (Format: Art.Nr: Name Preis):
     {preise}
     KUNDEN: {kunden_db}
-    
     AUFGABE: JSON erstellen.
-    - Wenn du einen Artikel aus der Preisliste erkennst, schreibe die Artikelnummer oder den exakten Namen in 'text'.
-    
     Format: {{'anrede': 'Herr/Frau', 'kunde_name': 'Name', 'adresse': 'Str, PLZ Ort', 'kundennummer': '1000', 'problem_titel': 'Betreff', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}
     """
     res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
@@ -208,46 +195,30 @@ def text_zu_auftrag(txt, kunden_db):
     return json.loads(res.choices[0].message.content)
 
 def hole_nr():
-    # --- ÄNDERUNG: Neues Nummerierungsformat B-YYYY-MM-01 ---
     now = datetime.now()
     jahr = now.strftime("%Y")
     monat = now.strftime("%m")
-    prefix = f"B-{jahr}-{monat}"  # z.B. B-2026-01
-    
+    prefix = f"B-{jahr}-{monat}"
     start_nr = f"{prefix}-01"
 
-    if not google_creds: 
-        return start_nr
-        
+    if not google_creds: return start_nr
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         ws = sh.get_worksheet(0)
-        col = ws.col_values(1) # Spalte A (Nr)
-        
-        if not col or len(col) < 2:
-            return start_nr
-            
-        last_entry = col[-1] # Letzter Eintrag, z.B. "B-2026-01-05" oder altes Format "2025001"
-        
-        # Wir prüfen, ob der letzte Eintrag das neue Format hat und vom selben Monat ist
+        col = ws.col_values(1)
+        if not col or len(col) < 2: return start_nr
+        last_entry = col[-1]
         if last_entry.startswith(prefix):
             try:
-                # Format splitten: B-2026-01-05 -> ["B", "2026", "01", "05"]
                 parts = last_entry.split('-')
                 if len(parts) == 4:
                     nummer = int(parts[3])
                     neue_nummer = nummer + 1
-                    # Formatierung: führende Null wenn < 10 (01, 02...)
                     return f"{prefix}-{neue_nummer:02d}"
-            except:
-                pass # Falls Parsing fehlschlägt, Fallback nutzen
-        
-        # Falls neuer Monat oder altes Format -> Reset auf 01
+            except: pass
         return start_nr
-
-    except Exception as e:
-        return start_nr
+    except Exception as e: return start_nr
 
 def baue_datev_datei(daten):
     umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -261,13 +232,50 @@ def baue_datev_datei(daten):
     line = f"{umsatz};S;EUR;8400;{gegenkonto};{datum};{rechnungs_nr};{buchungstext}"
     return f"{header}\n{line}"
 
+# --- NEUE PDF KLASSE MIT FUSSZEILE WIE SCREENSHOT ---
 class PDF(FPDF):
     def header(self): pass
+    
     def footer(self):
-        self.set_y(-20)
-        self.set_font('Helvetica', 'I', 8)
-        self.set_text_color(128)
-        self.cell(0, 4, 'Interwark | Vorlage für DATEV', 0, 1, 'L')
+        # 1. Positionierung & Hintergrund
+        self.set_y(-35) # 35mm von unten
+        self.set_fill_color(248, 248, 248) # Helles Grau
+        self.rect(0, 297-35, 210, 35, 'F') # Rechteck über volle Breite
+        
+        # 2. Farben & Hilfsfunktion
+        c_head = (20, 80, 160) # Blau für Überschriften
+        c_text = (50, 50, 50)  # Dunkelgrau für Text
+        def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
+        
+        y_start = self.get_y() + 3
+        
+        # --- SPALTE 1: Firma ---
+        self.set_xy(10, y_start)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
+        self.cell(45, 4, txt("Firma"), 0, 1, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
+        self.multi_cell(45, 4, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
+        
+        # --- SPALTE 2: KONTAKT ---
+        self.set_xy(60, y_start)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
+        self.cell(45, 4, txt("KONTAKT"), 0, 1, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
+        self.multi_cell(45, 4, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
+        
+        # --- SPALTE 3: BANKVERBINDUNG ---
+        self.set_xy(110, y_start)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
+        self.cell(45, 4, txt("BANKVERBINDUNG"), 0, 1, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
+        self.multi_cell(45, 4, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
+        
+        # --- SPALTE 4: STEUERNUMMER ---
+        self.set_xy(160, y_start)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
+        self.cell(45, 4, txt("STEUERNUMMER"), 0, 1, 'L')
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
+        self.multi_cell(45, 4, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
 
 def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
@@ -280,7 +288,7 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font('Helvetica', 'B', 16); pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
     pdf.set_font('Helvetica', '', 10)
     pdf.set_xy(10, 18); pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
-    pdf.set_xy(10, 23); pdf.cell(0, 5, 'Hohe Str. 26', 0, 0, 'L')
+    pdf.set_xy(10, 23); pdf.cell(0, 5, 'Hohe Str. 28', 0, 0, 'L') # Adresse auf 28 angepasst
     pdf.set_xy(10, 28); pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
     pdf.set_xy(10, 33); pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
     pdf.set_draw_color(0, 0, 0); pdf.line(10, 42, 200, 42)
@@ -299,7 +307,6 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # --- ÄNDERUNG: Schriftgröße von 20 auf 18 verkleinert ---
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 18)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
@@ -335,9 +342,7 @@ def erstelle_bericht_pdf(daten):
     hinweis = "Hinweis: Dieses Dokument dient als Leistungsnachweis und Buchungsvorlage.\nKeine Rechnung im Sinne des §14 UStG."
     pdf.multi_cell(0, 5, txt(hinweis))
     
-    pdf.ln(5); pdf.set_font("Helvetica", '', 8)
-    bank_info = "Bank: Sparkasse Emden | IBAN: DE00 0000 0000 0000 0000 00"
-    pdf.cell(0, 5, txt(bank_info), 0, 1, 'C')
+    # --- Bankinfo hier entfernt, da sie jetzt in der Fußzeile steht ---
     
     ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
     pdf.output(dateiname); return dateiname
@@ -376,27 +381,22 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-# Version Update
-st.title("Auftrags- und Arbeitsberichte App 3.3.0")
+st.title("Auftrags- und Arbeitsberichte App 3.4.0")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
     
     if api_key and google_creds:
         with st.spinner("Lade Zahlen..."):
-            
             umsatz, anzahl_heute, anzahl_woche, chart_data = lade_statistik_daten()
-            
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"):
                 st.error(umsatz)
             else:
                 k1, k2, k3 = st.columns(3)
                 if not isinstance(umsatz, (int, float)): umsatz = 0.0
-                
                 k1.metric("Umsatz (Monat)", f"{umsatz:,.2f} €".replace(",", "X").replace(".", ",").replace("X", "."))
                 k2.metric("Aufträge (Heute)", str(anzahl_heute))
                 k3.metric("Aufträge (Woche)", str(anzahl_woche))
-                
                 st.markdown("---")
                 st.subheader("📈 Umsatzverlauf")
                 if chart_data is not None and not chart_data.empty:
@@ -413,7 +413,6 @@ elif modus == "Bericht & DATEV erstellen":
     if f and api_key and client:
         dateiendung = f.name.split('.')[-1]
         temp_filename = f"temp_audio.{dateiendung}"
-        
         with st.spinner("⏳ Erstelle Bericht..."):
             with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
