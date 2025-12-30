@@ -31,7 +31,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.10.2", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.11.0", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -104,7 +104,6 @@ def lade_statistik_daten():
         
         col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
         col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
-        # Suche Status Spalte (Tolerant: Groß/Klein, mit Leerzeichen)
         col_status = next((c for c in df.columns if "status" in c.lower()), None)
         col_kunde = next((c for c in df.columns if "kunde" in c.lower()), None)
         col_nr = next((c for c in df.columns if "nr" in c.lower()), None)
@@ -137,7 +136,6 @@ def lade_statistik_daten():
         chart_data = df_sorted.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
         
         offene_liste = []
-        # Nur wenn Status-Spalte gefunden wurde, können wir filtern
         if col_status and col_kunde and col_nr:
             for i, row in enumerate(alle_werte):
                 if i == 0: continue 
@@ -146,7 +144,6 @@ def lade_statistik_daten():
                 idx_nr = raw_headers.index(col_nr) if col_nr in raw_headers else -1
                 idx_brutto = raw_headers.index(col_brutto) if col_brutto in raw_headers else -1
                 
-                # Wenn Zeile kürzer als Header (weil Spalte neu), ist Status leer -> Offen
                 status_wert = row[idx_status] if idx_status < len(row) and idx_status >= 0 else ""
                 
                 if "bezahlt" not in status_wert.lower():
@@ -269,26 +266,51 @@ def baue_datev_datei(daten):
 class PDF(FPDF):
     def header(self): pass
     def footer(self):
+        # 1. Positionierung & Hintergrund
         self.set_y(-35)
         self.set_fill_color(248, 248, 248) 
         self.rect(0, 297-35, 210, 35, 'F') 
+        
+        # 2. Farben & Hilfsfunktion
         c_head = (20, 80, 160) # Blau
         c_text = (50, 50, 50)  # Dunkelgrau
         def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
+        
         y_top = 297 - 30 
         
-        # --- FUSSZEILE GRÖSSEN ---
-        self.set_xy(10, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("Firma"), 0, 2, 'L')
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
+        # --- FUSSZEILE REPARIERT (Absolute Positionen erzwingen) ---
         
-        self.set_xy(60, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("KONTAKT"), 0, 2, 'L')
-        self.set_xy(60, self.get_y()); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
+        # SPALTE 1
+        self.set_xy(10, y_top)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("Firma"), 0, 2, 'L')
+        self.set_xy(10, y_top + 4) # Erzwinge Startposition Text
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
         
-        self.set_xy(110, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 2, 'L')
-        self.set_xy(110, self.get_y()); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
+        # SPALTE 2
+        self.set_xy(60, y_top)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("KONTAKT"), 0, 2, 'L')
+        self.set_xy(60, y_top + 4) # Erzwinge Startposition Text
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
         
-        self.set_xy(160, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 2, 'L')
-        self.set_xy(160, self.get_y()); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
+        # SPALTE 3
+        self.set_xy(110, y_top)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 2, 'L')
+        self.set_xy(110, y_top + 4) # Erzwinge Startposition Text
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
+        
+        # SPALTE 4
+        self.set_xy(160, y_top)
+        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
+        self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 2, 'L')
+        self.set_xy(160, y_top + 4) # Erzwinge Startposition Text
+        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
+        self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
 
 def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
@@ -402,7 +424,7 @@ def berechne_summen(df_pos):
     return positions_liste, summe_netto, mwst, brutto
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.10.2")
+st.title("Auftrags- und Arbeitsberichte App 3.11.0")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -512,4 +534,29 @@ elif modus == "Bericht & DATEV erstellen":
                         wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
                         st.link_button("💬 WhatsApp öffnen", wa_link)
                     
-                    st.info("📱 iPhone-Tipp: PDF öffnen -> 'Te
+                    st.info("📱 iPhone-Tipp: PDF öffnen -> 'Teilen'-Knopf (Viereck mit Pfeil) -> WhatsApp wählen.")
+                    
+                    with open(pdf, "rb") as f_csv: st.download_button("📊 DATEV (CSV) laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
+
+            except Exception as e: st.error(f"Fehler beim Erstellen: {e}")
+
+    if st.session_state.audio_processed:
+        if st.button("❌ Abbrechen / Neu starten"):
+            st.session_state.temp_data = None; st.session_state.audio_processed = False; st.rerun()
+
+else: 
+    st.caption("Modus: 🟠 Neuen Auftrag anlegen")
+    f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
+    if f and api_key and client:
+        dateiendung = f.name.split('.')[-1]
+        temp_filename = f"temp_audio.{dateiendung}"
+        with st.spinner("⏳ Erfasse Auftrag..."):
+            with open(temp_filename, "wb") as file: file.write(f.getbuffer())
+            try:
+                txt = audio_zu_text(temp_filename)
+                kunden = lade_kunden_live()
+                auf = text_zu_auftrag(txt, kunden)
+                st.success(f"Auftrag von {auf.get('kunde_name')}")
+                st.json(auf)
+                if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
+            except Exception as e: st.error(f"Fehler: {e}")
