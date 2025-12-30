@@ -4,4 +4,6 @@ fpdf
 pandas
 openpyxl
 gspread
+streamlit-drawable-canvas
+
 
