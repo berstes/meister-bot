@@ -349,6 +349,7 @@ def erstelle_bericht_pdf(daten, signature_img_path=None):
     pdf = PDF(); pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
+    # --- KOPFZEILE & ADRESSE ---
     pdf.set_text_color(0, 0, 0)
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 17)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 17)
@@ -382,6 +383,7 @@ def erstelle_bericht_pdf(daten, signature_img_path=None):
     pdf.cell(0, 5, txt(f"Betreff: {daten.get('problem_titel')}"), ln=1)
     pdf.ln(10)
     
+    # --- TABELLE ---
     pdf.set_fill_color(240, 240, 240); pdf.set_font("Helvetica", 'B', 10)
     pdf.cell(10, 8, "#", 1, 0, 'C', 1); pdf.cell(90, 8, "Leistung / Artikel", 1, 0, 'L', 1)
     pdf.cell(20, 8, "Menge", 1, 0, 'C', 1); pdf.cell(30, 8, "Einzel", 1, 0, 'R', 1); pdf.cell(30, 8, "Gesamt", 1, 1, 'R', 1)
@@ -393,6 +395,7 @@ def erstelle_bericht_pdf(daten, signature_img_path=None):
         pdf.cell(10, 8, str(i), 1, 0, 'C'); pdf.cell(90, 8, text, 1, 0, 'L'); pdf.cell(20, 8, menge, 1, 0, 'C')
         pdf.cell(30, 8, einzel, 1, 0, 'R'); pdf.cell(30, 8, gesamt, 1, 1, 'R'); i += 1
     
+    # --- SUMMEN ---
     pdf.ln(5); pdf.set_font("Helvetica", '', 11)
     netto = f"{daten.get('summe_netto', 0):.2f}".replace('.', ',')
     mwst = f"{daten.get('mwst_betrag', 0):.2f}".replace('.', ',')
@@ -403,35 +406,41 @@ def erstelle_bericht_pdf(daten, signature_img_path=None):
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
     pdf.ln(10)
+    
+    # --- UNTERSCHRIFT ---
+    y_sig = pdf.get_y()
+    # Prüfen ob noch genug Platz auf der Seite ist, sonst neue Seite
+    if y_sig > 240: 
+        pdf.add_page()
+        y_sig = pdf.get_y()
 
-    # --- HIER IST DER NEUE TEXT ---
-    pdf.set_font("Helvetica", 'I', 9) # 'I' steht für Italic (Kursiv), wirkt höflich und erklärend
+    if signature_img_path and os.path.exists(signature_img_path):
+        pdf.set_font("Helvetica", '', 9)
+        pdf.cell(0, 5, "Digital unterschrieben von Kunde:", ln=1)
+        pdf.image(signature_img_path, x=10, y=pdf.get_y() + 2, w=50) # Breite etwas angepasst
+        pdf.ln(35) # Platz nach dem Bild
+    else:
+        pdf.set_font("Helvetica", 'I', 9)
+        pdf.cell(0, 5, "Unterschrift Kunde: _______________________", ln=1)
+        pdf.ln(15)
+        
+    # --- HIER IST DEIN NEUER TEXT (Unter der Unterschrift) ---
+    pdf.set_font("Helvetica", 'I', 8)
     hinweis_text = (
         "Wichtiger Hinweis: Bei diesem Dokument handelt es sich um einen Arbeitsbericht "
         "und Leistungsnachweis, nicht um eine Rechnung. Die aufgeführten Beträge dienen "
         "lediglich Ihrer Orientierung und entsprechen voraussichtlich der Endsumme. "
         "Der verbindliche Zahlbetrag ergibt sich aus der separaten Rechnungsstellung."
     )
-    pdf.multi_cell(0, 5, txt(hinweis_text))
-    # ------------------------------
-    
-    # --- FEATURE: DIGITAL SIGNATURE INTEGRATION ---
-    y_sig = pdf.get_y()
-    if signature_img_path and os.path.exists(signature_img_path):
-        pdf.set_font("Helvetica", '', 9)
-        pdf.cell(0, 5, "Digital unterschrieben von Kunde:", ln=1)
-        pdf.image(signature_img_path, x=10, y=y_sig + 5, w=60)
-        pdf.set_y(y_sig + 35) # Platz nach unten schieben
-    else:
-        pdf.set_font("Helvetica", 'I', 9)
-        pdf.cell(0, 5, "Unterschrift Kunde: _______________________", ln=1)
-        pdf.ln(10)
-        
-    pdf.set_font("Helvetica", 'I', 8)
-    # --- FEATURE: ZEITSTEMPEL & GPS NACHWEIS ---
+    pdf.set_text_color(80, 80, 80) # Dunkelgrau für dezente Optik
+    pdf.multi_cell(0, 4, txt(hinweis_text))
+    pdf.ln(5)
+
+    # --- ZEITSTEMPEL & GPS (Ganz unten) ---
     timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    pdf.set_text_color(100, 100, 100)
-    pdf.multi_cell(0, 4, txt(f"Digitaler Zeitstempel: {timestamp} (Server-Time)\nGPS-Log: Verifiziert via Standort-Abgleich.\nDieses Dokument dient als Leistungsnachweis."))
+    pdf.set_text_color(120, 120, 120) # Noch etwas heller
+    pdf.set_font("Courier", '', 7) # Courier wirkt technischer für Daten
+    pdf.multi_cell(0, 3, txt(f"DIGITALER LOG: {timestamp} (Server-Time) | GPS-Verifiziert.\nID: {rechnungs_nr}-{int(time.time())}"))
 
     ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
     pdf.output(dateiname); return dateiname
@@ -662,4 +671,5 @@ else:
                 st.json(auf)
                 if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
             except Exception as e: st.error(f"Fehler: {e}")
+
 
