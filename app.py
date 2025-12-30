@@ -3,6 +3,7 @@ import os
 import json
 import time
 import smtplib
+import urllib.parse
 from datetime import datetime
 
 # --- 1. SICHERHEITS-START ---
@@ -30,7 +31,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.8.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.9.0", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -48,6 +49,9 @@ with st.sidebar:
     st.header("⚙️ Einstellungen")
     if st.button("🔄 App Reset / Neu laden"):
         st.cache_data.clear()
+        # Session State löschen für kompletten Reset
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
         st.rerun()
     st.markdown("---")
     
@@ -184,7 +188,7 @@ def text_zu_daten(txt, preise, kunden_db):
     {preise}
     KUNDEN: {kunden_db}
     AUFGABE: JSON erstellen.
-    Format: {{'anrede': 'Herr/Frau', 'kunde_name': 'Name', 'adresse': 'Str, PLZ Ort', 'kundennummer': '1000', 'problem_titel': 'Betreff', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}
+    Format: {{'anrede': 'Herr/Frau', 'kunde_name': 'Name', 'adresse': 'Str, PLZ Ort', 'kundennummer': '1000', 'problem_titel': 'Betreff', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}
     """
     res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
     return json.loads(res.choices[0].message.content)
@@ -248,8 +252,6 @@ class PDF(FPDF):
         
         y_top = 297 - 30 
         
-        # --- FUSSZEILE GRÖSSEN (wie gewünscht) ---
-        
         # --- SPALTE 1: Firma ---
         self.set_xy(10, y_top)
         self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
@@ -289,11 +291,9 @@ def erstelle_bericht_pdf(daten):
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
     pdf.set_text_color(0, 0, 0)
-    # --- ÄNDERUNG: Logo 15% kleiner (20 * 0.85 = 17) ---
     if os.path.exists("logo.png"): pdf.image("logo.png", 160, 10, 17)
     elif os.path.exists("logo.jpg"): pdf.image("logo.jpg", 160, 10, 17)
 
-    # --- ÄNDERUNG: Firmenname Header 2px kleiner (16 -> 14) ---
     pdf.set_font('Helvetica', 'B', 14); pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
     pdf.set_font('Helvetica', '', 10)
     pdf.set_xy(10, 18); pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
@@ -316,7 +316,6 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    # --- ÄNDERUNG: Arbeitsbericht Titel -1px (16 -> 15) ---
     pdf.ln(10); pdf.set_font("Helvetica", 'B', 15)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
@@ -388,8 +387,33 @@ def sende_mail(pfad, d):
         s.login(email_sender, email_password); s.sendmail(email_sender, email_receiver, msg.as_string()); s.quit(); return True
     except: return False
 
+def berechne_summen(df_pos):
+    """Berechnet Netto, MwSt und Brutto aus dem DataFrame neu."""
+    summe_netto = 0.0
+    positions_liste = []
+    
+    for _, row in df_pos.iterrows():
+        try:
+            m = float(row['menge'])
+            e = float(row['einzel_netto'])
+            g = m * e
+            summe_netto += g
+            
+            # Zeile für PDF aufbereiten
+            positions_liste.append({
+                "text": row['text'],
+                "menge": m,
+                "einzel_netto": e,
+                "gesamt_netto": g
+            })
+        except: pass
+        
+    mwst = summe_netto * 0.19
+    brutto = summe_netto + mwst
+    return positions_liste, summe_netto, mwst, brutto
+
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.8.0")
+st.title("Auftrags- und Arbeitsberichte App 3.9.0")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -416,12 +440,21 @@ if modus == "Chef-Dashboard":
 
 elif modus == "Bericht & DATEV erstellen":
     st.caption("Modus: 🔵 Arbeitsbericht erstellen")
+    
+    # Session State initialisieren
+    if 'temp_data' not in st.session_state:
+        st.session_state.temp_data = None
+    if 'audio_processed' not in st.session_state:
+        st.session_state.audio_processed = False
+
     f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
 
-    if f and api_key and client:
+    # 1. SCHRITT: AUDIO VERARBEITEN (nur einmal)
+    if f and api_key and client and not st.session_state.audio_processed:
         dateiendung = f.name.split('.')[-1]
         temp_filename = f"temp_audio.{dateiendung}"
-        with st.spinner("⏳ Erstelle Bericht..."):
+        
+        with st.spinner("⏳ Analysiere Audio..."):
             with open(temp_filename, "wb") as file: file.write(f.getbuffer())
             try:
                 txt = audio_zu_text(temp_filename)
@@ -430,26 +463,89 @@ elif modus == "Bericht & DATEV erstellen":
                 dat = text_zu_daten(txt, preise, kunden)
                 dat['rechnungs_nr'] = hole_nr()
                 
-                st.markdown("---")
-                c1, c2, c3 = st.columns(3)
-                c1.metric("Kunde", dat.get('kunde_name')); c2.metric("Nr.", dat.get('rechnungs_nr')); c3.metric("Brutto", f"{dat.get('summe_brutto'):.2f} €")
-                
-                if dat.get('kundennummer'):
-                    st.success(f"✅ Stammkunde: {dat.get('anrede')} {dat.get('kunde_name')}")
-                
-                pdf = erstelle_bericht_pdf(dat)
-                csv = baue_datev_datei(dat)
-                
-                if speichere_rechnung(dat): st.toast("✅ Gespeichert")
-                
-                st.markdown("### 📥 Downloads")
-                c_a, c_b = st.columns(2)
-                with open(pdf, "rb") as file: c_a.download_button("📄 PDF Bericht", file, pdf, "application/pdf")
-                c_b.download_button("📊 DATEV", csv, f"DATEV_{dat.get('rechnungs_nr')}.csv", "text/csv")
-                
-                if email_sender: 
-                    if sende_mail(pdf, dat): st.toast("📧 Mail raus")
+                # Daten in Session State speichern
+                st.session_state.temp_data = dat
+                st.session_state.audio_processed = True
+                st.rerun() # Seite neu laden, um Editor anzuzeigen
             except Exception as e: st.error(f"Fehler: {e}")
+
+    # 2. SCHRITT: VORSCHAU & EDITOR
+    if st.session_state.temp_data:
+        st.markdown("### 📝 Vorschau & Korrektur")
+        dat = st.session_state.temp_data
+        
+        c1, c2 = st.columns(2)
+        neuer_kunde = c1.text_input("Kunde", value=dat.get('kunde_name', ''))
+        neue_nr = c2.text_input("Bericht Nr.", value=dat.get('rechnungs_nr', ''))
+        neue_adresse = st.text_area("Adresse", value=dat.get('adresse', ''))
+        neuer_titel = st.text_input("Betreff / Arbeit", value=dat.get('problem_titel', ''))
+
+        st.markdown("#### Positionen bearbeiten")
+        # Tabelle für Positionen
+        df_pos = pd.DataFrame(dat.get('positionen', []))
+        if 'gesamt_netto' in df_pos.columns: 
+            df_pos = df_pos.drop(columns=['gesamt_netto']) # Gesamt berechnen wir neu
+        
+        edited_df = st.data_editor(df_pos, num_rows="dynamic", use_container_width=True)
+
+        # 3. SCHRITT: FERTIGSTELLEN
+        if st.button("✅ Bericht jetzt erstellen", type="primary"):
+            try:
+                with st.spinner("Erstelle PDF..."):
+                    # Daten aktualisieren
+                    pos_list, sum_net, sum_mwst, sum_brutto = berechne_summen(edited_df)
+                    
+                    final_data = {
+                        'rechnungs_nr': neue_nr,
+                        'kunde_name': neuer_kunde,
+                        'adresse': neue_adresse,
+                        'problem_titel': neuer_titel,
+                        'positionen': pos_list,
+                        'summe_netto': sum_net,
+                        'mwst_betrag': sum_mwst,
+                        'summe_brutto': sum_brutto,
+                        'anrede': dat.get('anrede', ''),
+                        'kundennummer': dat.get('kundennummer', '')
+                    }
+                    
+                    # PDF & CSV erstellen
+                    pdf = erstelle_bericht_pdf(final_data)
+                    csv = baue_datev_datei(final_data)
+                    
+                    # Speichern
+                    gespeichert = speichere_rechnung(final_data)
+                    mail_gesendet = False
+                    if email_sender:
+                        mail_gesendet = sende_mail(pdf, final_data)
+
+                    # --- ERGEBNIS ANZEIGEN ---
+                    st.success("Erledigt!")
+                    if gespeichert: st.toast("Cloud gespeichert ✅")
+                    if mail_gesendet: st.toast("Mail gesendet 📧")
+                    
+                    # Downloads
+                    col_dl1, col_dl2 = st.columns(2)
+                    with open(pdf, "rb") as file: 
+                        col_dl1.download_button("📄 PDF laden", file, pdf, "application/pdf")
+                    col_dl2.download_button("📊 DATEV laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
+                    
+                    st.markdown("---")
+                    
+                    # --- WHATSAPP LINK ---
+                    wa_text = f"Moin {neuer_kunde}, anbei der Arbeitsbericht {neue_nr}."
+                    wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
+                    st.link_button("💬 WhatsApp Link öffnen", wa_link)
+                    st.caption("Klicke den Button, öffne WhatsApp und ziehe das PDF in den Chat.")
+
+            except Exception as e:
+                st.error(f"Fehler beim Erstellen: {e}")
+
+    # Button um alles abzubrechen
+    if st.session_state.audio_processed:
+        if st.button("❌ Abbrechen / Neu starten"):
+            st.session_state.temp_data = None
+            st.session_state.audio_processed = False
+            st.rerun()
 
 else: 
     st.caption("Modus: 🟠 Neuen Auftrag anlegen")
