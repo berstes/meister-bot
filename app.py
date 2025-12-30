@@ -31,7 +31,7 @@ except ImportError as e:
 
 # --- 2. KONFIGURATION ---
 # HIER IST DER NEUE NAME FÜR DEN BROWSER-TAB:
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.2.2", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -426,3 +426,4 @@ else:
                 st.json(auf)
                 if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
             except Exception as e: st.error(f"Fehler: {e}")
+
