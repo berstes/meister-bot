@@ -31,7 +31,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.10.1", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.10.2", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -89,14 +89,14 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_statistik_daten():
-    if not google_creds: return 0.0, 0, 0, None, []
+    if not google_creds: return 0.0, 0, 0, None, [], []
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name)
         ws_rechnungen = sh.get_worksheet(0)
         alle_werte = ws_rechnungen.get_all_values()
         
-        if len(alle_werte) < 2: return 0.0, 0, 0, None, []
+        if len(alle_werte) < 2: return 0.0, 0, 0, None, [], []
         
         raw_headers = alle_werte[0]
         headers_clean = [str(h).strip() for h in raw_headers]
@@ -104,11 +104,15 @@ def lade_statistik_daten():
         
         col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
         col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
+        # Suche Status Spalte (Tolerant: Groß/Klein, mit Leerzeichen)
         col_status = next((c for c in df.columns if "status" in c.lower()), None)
         col_kunde = next((c for c in df.columns if "kunde" in c.lower()), None)
         col_nr = next((c for c in df.columns if "nr" in c.lower()), None)
         
-        if not col_datum or not col_brutto: return 0.0, 0, 0, None, []
+        missing_cols = []
+        if not col_status: missing_cols.append("Status")
+        
+        if not col_datum or not col_brutto: return 0.0, 0, 0, None, [], missing_cols
 
         df['Datum_Clean'] = pd.to_datetime(df[col_datum], format='%d.%m.%Y', errors='coerce')
         df = df.dropna(subset=['Datum_Clean']) 
@@ -133,6 +137,7 @@ def lade_statistik_daten():
         chart_data = df_sorted.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
         
         offene_liste = []
+        # Nur wenn Status-Spalte gefunden wurde, können wir filtern
         if col_status and col_kunde and col_nr:
             for i, row in enumerate(alle_werte):
                 if i == 0: continue 
@@ -141,6 +146,7 @@ def lade_statistik_daten():
                 idx_nr = raw_headers.index(col_nr) if col_nr in raw_headers else -1
                 idx_brutto = raw_headers.index(col_brutto) if col_brutto in raw_headers else -1
                 
+                # Wenn Zeile kürzer als Header (weil Spalte neu), ist Status leer -> Offen
                 status_wert = row[idx_status] if idx_status < len(row) and idx_status >= 0 else ""
                 
                 if "bezahlt" not in status_wert.lower():
@@ -149,9 +155,9 @@ def lade_statistik_daten():
                     betrag = row[idx_brutto] if idx_brutto >= 0 else "0"
                     offene_liste.append({"gspread_row": i + 1, "nr": nr, "kunde": kunde, "betrag": betrag, "status": status_wert})
         
-        return umsatz_monat, anzahl_heute, anzahl_woche, chart_data, offene_liste
+        return umsatz_monat, anzahl_heute, anzahl_woche, chart_data, offene_liste, missing_cols
         
-    except Exception as e: return 0.0, 0, 0, None, []
+    except Exception as e: return 0.0, 0, 0, None, [], []
 
 def markiere_als_bezahlt(row_index):
     if not google_creds: return False
@@ -396,13 +402,17 @@ def berechne_summen(df_pos):
     return positions_liste, summe_netto, mwst, brutto
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.10.1")
+st.title("Auftrags- und Arbeitsberichte App 3.10.2")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
     if api_key and google_creds:
         with st.spinner("Lade Zahlen..."):
-            umsatz, anzahl_heute, anzahl_woche, chart_data, offene_posten = lade_statistik_daten()
+            umsatz, anzahl_heute, anzahl_woche, chart_data, offene_posten, missing_cols = lade_statistik_daten()
+            
+            # Warnung bei fehlenden Spalten
+            if missing_cols:
+                st.warning(f"⚠️ Achtung: Ich kann die Spalte(n) **{', '.join(missing_cols)}** nicht finden. Bitte prüfe das Google Sheet.")
             
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"): st.error(umsatz)
             else:
@@ -502,30 +512,4 @@ elif modus == "Bericht & DATEV erstellen":
                         wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
                         st.link_button("💬 WhatsApp öffnen", wa_link)
                     
-                    # --- ÄNDERUNG: HIER DER IPHONE HINWEIS ---
-                    st.info("📱 iPhone-Tipp: PDF öffnen -> 'Teilen'-Knopf (Viereck mit Pfeil) -> WhatsApp wählen.")
-                    
-                    with open(pdf, "rb") as f_csv: st.download_button("📊 DATEV (CSV) laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
-
-            except Exception as e: st.error(f"Fehler beim Erstellen: {e}")
-
-    if st.session_state.audio_processed:
-        if st.button("❌ Abbrechen / Neu starten"):
-            st.session_state.temp_data = None; st.session_state.audio_processed = False; st.rerun()
-
-else: 
-    st.caption("Modus: 🟠 Neuen Auftrag anlegen")
-    f = st.file_uploader("Sprachnachricht", type=["mp3","wav","m4a","ogg","opus"], label_visibility="collapsed")
-    if f and api_key and client:
-        dateiendung = f.name.split('.')[-1]
-        temp_filename = f"temp_audio.{dateiendung}"
-        with st.spinner("⏳ Erfasse Auftrag..."):
-            with open(temp_filename, "wb") as file: file.write(f.getbuffer())
-            try:
-                txt = audio_zu_text(temp_filename)
-                kunden = lade_kunden_live()
-                auf = text_zu_auftrag(txt, kunden)
-                st.success(f"Auftrag von {auf.get('kunde_name')}")
-                st.json(auf)
-                if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
-            except Exception as e: st.error(f"Fehler: {e}")
+                    st.info("📱 iPhone-Tipp: PDF öffnen -> 'Te
