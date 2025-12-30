@@ -403,6 +403,17 @@ def erstelle_bericht_pdf(daten, signature_img_path=None):
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
     pdf.ln(10)
+
+    # --- HIER IST DER NEUE TEXT ---
+    pdf.set_font("Helvetica", 'I', 9) # 'I' steht für Italic (Kursiv), wirkt höflich und erklärend
+    hinweis_text = (
+        "Wichtiger Hinweis: Bei diesem Dokument handelt es sich um einen Arbeitsbericht "
+        "und Leistungsnachweis, nicht um eine Rechnung. Die aufgeführten Beträge dienen "
+        "lediglich Ihrer Orientierung und entsprechen voraussichtlich der Endsumme. "
+        "Der verbindliche Zahlbetrag ergibt sich aus der separaten Rechnungsstellung."
+    )
+    pdf.multi_cell(0, 5, txt(hinweis_text))
+    # ------------------------------
     
     # --- FEATURE: DIGITAL SIGNATURE INTEGRATION ---
     y_sig = pdf.get_y()
@@ -651,3 +662,4 @@ else:
                 st.json(auf)
                 if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
             except Exception as e: st.error(f"Fehler: {e}")
+
