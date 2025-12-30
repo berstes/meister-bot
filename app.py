@@ -30,7 +30,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot 3.2", page_icon="🛡️")
+st.set_page_config(page_title="MeisterBot 3.3", page_icon="🔢")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -98,25 +98,20 @@ def lade_statistik_daten():
         if len(alle_werte) < 2:
             return 0.0, 0, 0, None
             
-        # Header bereinigen
         raw_headers = alle_werte[0]
         headers_clean = [str(h).strip() for h in raw_headers]
         
-        # DataFrame erstellen
         df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
         
-        # Suchen nach Spalten (egal ob Groß/Klein)
         col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
         col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
         
         if not col_datum or not col_brutto:
             return 0.0, 0, 0, None
 
-        # Datum konvertieren
         df['Datum_Clean'] = pd.to_datetime(df[col_datum], format='%d.%m.%Y', errors='coerce')
         df = df.dropna(subset=['Datum_Clean']) 
 
-        # Geld konvertieren
         def putze_geld(x):
             if not isinstance(x, str): return 0.0
             sauber = x.replace('€', '').replace('EUR', '').strip()
@@ -126,7 +121,6 @@ def lade_statistik_daten():
             
         df['Brutto_Zahl'] = df[col_brutto].apply(putze_geld)
         
-        # Berechnungen
         heute = pd.Timestamp.now()
         df_monat = df[(df['Datum_Clean'].dt.month == heute.month) & (df['Datum_Clean'].dt.year == heute.year)]
         umsatz_monat = df_monat['Brutto_Zahl'].sum()
@@ -137,7 +131,6 @@ def lade_statistik_daten():
         df['KW'] = df['Datum_Clean'].dt.isocalendar().week
         anzahl_woche = len(df[(df['KW'] == aktuelle_kw) & (df['Datum_Clean'].dt.year == heute.year)])
         
-        # Chart
         df['Monat_Jahr'] = df['Datum_Clean'].dt.strftime('%Y-%m')
         df = df.sort_values('Datum_Clean')
         chart_data = df.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
@@ -170,13 +163,24 @@ def lade_kunden_live():
     except Exception as e: return f"Fehler DB: {e}"
 
 def lade_preise_live():
+    """Liest Preise + Artikelnummer (Spalte C)"""
     if not google_creds: return "Preise: Standard"
     try:
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name); ws = sh.worksheet("Preisliste")
         alle = ws.get_all_values(); txt = "PREISLISTE:\n"
+        # Wir gehen davon aus: Spalte A=Name, B=Preis, C=ArtNr
         for z in alle[1:]:
-            if len(z)>=2: txt += f"- {z[0]}: {z[1]} EUR\n"
+            if len(z) >= 2:
+                name = z[0]
+                preis = z[1]
+                art_nr = z[2] if len(z) > 2 else "" # Hier holen wir Spalte C
+                
+                if art_nr:
+                    # Wir bauen den String so, dass die KI die Nummer kennt
+                    txt += f"- Art. {art_nr}: {name} ({preis} EUR)\n"
+                else:
+                    txt += f"- {name}: {preis} EUR\n"
         return txt
     except: return "Preise: Standard"
 
@@ -187,9 +191,13 @@ def audio_zu_text(pfad):
 def text_zu_daten(txt, preise, kunden_db):
     sys = f"""
     Du bist Buchhalter.
-    PREISE: {preise}
+    PREISE (Format: Art.Nr: Name Preis):
+    {preise}
     KUNDEN: {kunden_db}
+    
     AUFGABE: JSON erstellen.
+    - Wenn du einen Artikel aus der Preisliste erkennst, schreibe die Artikelnummer oder den exakten Namen in 'text'.
+    
     Format: {{'anrede': 'Herr/Frau', 'kunde_name': 'Name', 'adresse': 'Str, PLZ Ort', 'kundennummer': '1000', 'problem_titel': 'Betreff', 'positionen': [{{'text':'L', 'menge':1.0, 'einzel_netto':0.0, 'gesamt_netto':0.0}}], 'summe_netto':0.0, 'mwst_betrag':0.0, 'summe_brutto':0.0}}
     """
     res = client.chat.completions.create(model="gpt-4o", messages=[{"role":"system","content":sys},{"role":"user","content":txt}], response_format={"type":"json_object"})
@@ -304,21 +312,9 @@ def speichere_rechnung(d):
     if not google_creds: return False
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        # HIER IST DIE KORREKTUR: EXAKTE REIHENFOLGE!
         if not ws.get_all_values(): 
             ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr"])
-        
-        # WICHTIG: Die Reihenfolge in dieser Liste MUSS zur Reihenfolge im Sheet passen (A, B, C...)
-        ws.append_row([
-            d.get('rechnungs_nr'), # Spalte A: Nr
-            datetime.now().strftime("%d.%m.%Y"), # Spalte B: Datum
-            d.get('kunde_name'), # Spalte C: Kunde
-            d.get('problem_titel'), # Spalte D: Arbeit
-            str(d.get('summe_netto')).replace('.',','), # Spalte E: Netto
-            str(d.get('mwst_betrag')).replace('.',','), # Spalte F: MwSt
-            str(d.get('summe_brutto')).replace('.',','), # Spalte G: Brutto
-            d.get('kundennummer', '') # Spalte H: KdNr
-        ])
+        ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',','), d.get('kundennummer', '')])
         return True
     except: return False
 
@@ -346,7 +342,7 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("📊 MeisterBot 3.2")
+st.title("📊 MeisterBot 3.3")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -354,15 +350,12 @@ if modus == "Chef-Dashboard":
     if api_key and google_creds:
         with st.spinner("Lade Zahlen..."):
             
-            # Robustes Laden der Statistik
             umsatz, anzahl_heute, anzahl_woche, chart_data = lade_statistik_daten()
             
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"):
                 st.error(umsatz)
             else:
                 k1, k2, k3 = st.columns(3)
-                
-                # Sicherstellen, dass Umsatz eine Zahl ist
                 if not isinstance(umsatz, (int, float)): umsatz = 0.0
                 
                 k1.metric("Umsatz (Monat)", f"{umsatz:,.2f} €".replace(",", "X").replace(".", ",").replace("X", "."))
