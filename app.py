@@ -30,7 +30,8 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="MeisterBot 3.3", page_icon="🔢")
+# HIER IST DER NEUE NAME FÜR DEN BROWSER-TAB:
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -169,15 +170,13 @@ def lade_preise_live():
         gc = gspread.service_account_from_dict(google_creds)
         sh = gc.open(blatt_name); ws = sh.worksheet("Preisliste")
         alle = ws.get_all_values(); txt = "PREISLISTE:\n"
-        # Wir gehen davon aus: Spalte A=Name, B=Preis, C=ArtNr
         for z in alle[1:]:
             if len(z) >= 2:
                 name = z[0]
                 preis = z[1]
-                art_nr = z[2] if len(z) > 2 else "" # Hier holen wir Spalte C
+                art_nr = z[2] if len(z) > 2 else "" 
                 
                 if art_nr:
-                    # Wir bauen den String so, dass die KI die Nummer kennt
                     txt += f"- Art. {art_nr}: {name} ({preis} EUR)\n"
                 else:
                     txt += f"- {name}: {preis} EUR\n"
@@ -342,7 +341,8 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("📊 MeisterBot 3.3")
+# HIER IST DER NEUE TITEL FÜR DIE APP:
+st.title("Auftrags- und Arbeitsberichte App")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
