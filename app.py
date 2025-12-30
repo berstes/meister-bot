@@ -31,7 +31,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.10.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.10.1", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -89,7 +89,6 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_statistik_daten():
-    """Lädt Zahlen UND Status für das Dashboard"""
     if not google_creds: return 0.0, 0, 0, None, []
     try:
         gc = gspread.service_account_from_dict(google_creds)
@@ -100,13 +99,9 @@ def lade_statistik_daten():
         if len(alle_werte) < 2: return 0.0, 0, 0, None, []
         
         raw_headers = alle_werte[0]
-        # Headers säubern
         headers_clean = [str(h).strip() for h in raw_headers]
-        
-        # Pandas DataFrame erstellen
         df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
         
-        # Spalten suchen
         col_datum = next((c for c in df.columns if "datum" in c.lower()), None)
         col_brutto = next((c for c in df.columns if "brutto" in c.lower()), None)
         col_status = next((c for c in df.columns if "status" in c.lower()), None)
@@ -115,11 +110,9 @@ def lade_statistik_daten():
         
         if not col_datum or not col_brutto: return 0.0, 0, 0, None, []
 
-        # Datum parsen
         df['Datum_Clean'] = pd.to_datetime(df[col_datum], format='%d.%m.%Y', errors='coerce')
         df = df.dropna(subset=['Datum_Clean']) 
 
-        # Geld putzen
         def putze_geld(x):
             if not isinstance(x, str): return 0.0
             sauber = x.replace('€', '').replace('EUR', '').strip()
@@ -128,7 +121,6 @@ def lade_statistik_daten():
             except: return 0.0
         df['Brutto_Zahl'] = df[col_brutto].apply(putze_geld)
         
-        # Statistiken
         heute = pd.Timestamp.now()
         df_monat = df[(df['Datum_Clean'].dt.month == heute.month) & (df['Datum_Clean'].dt.year == heute.year)]
         umsatz_monat = df_monat['Brutto_Zahl'].sum()
@@ -140,15 +132,10 @@ def lade_statistik_daten():
         df_sorted = df.sort_values('Datum_Clean')
         chart_data = df_sorted.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
         
-        # --- OFFENE POSTEN FINDEN ---
         offene_liste = []
         if col_status and col_kunde and col_nr:
-            # Wir iterieren durch die Rohdaten, um den exakten Zeilenindex (gspread) zu haben
-            # row_index in gspread beginnt bei 1. Header ist 1. Daten ab 2.
             for i, row in enumerate(alle_werte):
-                if i == 0: continue # Header überspringen
-                
-                # Index finden (Spalten können variieren, daher sicherheitshalber Header-Index nutzen)
+                if i == 0: continue 
                 idx_status = raw_headers.index(col_status) if col_status in raw_headers else -1
                 idx_kunde = raw_headers.index(col_kunde) if col_kunde in raw_headers else -1
                 idx_nr = raw_headers.index(col_nr) if col_nr in raw_headers else -1
@@ -156,52 +143,28 @@ def lade_statistik_daten():
                 
                 status_wert = row[idx_status] if idx_status < len(row) and idx_status >= 0 else ""
                 
-                # Wenn Status leer ist oder "Offen" (und nicht "Bezahlt")
                 if "bezahlt" not in status_wert.lower():
                     kunde = row[idx_kunde] if idx_kunde >= 0 else "?"
                     nr = row[idx_nr] if idx_nr >= 0 else "?"
                     betrag = row[idx_brutto] if idx_brutto >= 0 else "0"
-                    
-                    offene_liste.append({
-                        "gspread_row": i + 1, # Gspread ist 1-basiert
-                        "nr": nr,
-                        "kunde": kunde,
-                        "betrag": betrag,
-                        "status": status_wert
-                    })
+                    offene_liste.append({"gspread_row": i + 1, "nr": nr, "kunde": kunde, "betrag": betrag, "status": status_wert})
         
         return umsatz_monat, anzahl_heute, anzahl_woche, chart_data, offene_liste
         
     except Exception as e: return 0.0, 0, 0, None, []
 
 def markiere_als_bezahlt(row_index):
-    """Schreibt 'Bezahlt' in die Status-Spalte der angegebenen Zeile"""
     if not google_creds: return False
     try:
-        gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        ws = sh.get_worksheet(0)
-        
-        # Wir müssen herausfinden, welche Spalte "Status" ist.
-        # Falls sie nicht existiert, nehmen wir an, sie wurde in Spalte 9 (I) angelegt oder wir hängen sie an.
+        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
         headers = ws.row_values(1)
         col_idx = -1
         for i, h in enumerate(headers):
-            if "status" in str(h).lower():
-                col_idx = i + 1
-                break
-        
-        if col_idx == -1:
-            # Spalte existiert noch nicht, wir nehmen Spalte 9 (I)
-            col_idx = 9
-            if len(headers) < 9:
-                ws.update_cell(1, 9, "Status") # Header schreiben falls fehlt
-        
+            if "status" in str(h).lower(): col_idx = i + 1; break
+        if col_idx == -1: col_idx = 9; ws.update_cell(1, 9, "Status")
         ws.update_cell(row_index, col_idx, "Bezahlt")
         return True
-    except Exception as e:
-        st.error(f"Fehler beim Speichern: {e}")
-        return False
+    except Exception as e: st.error(f"Fehler beim Speichern: {e}"); return False
 
 def lade_kunden_live():
     if not google_creds: return "Keine Cloud."
@@ -386,32 +349,16 @@ def erstelle_bericht_pdf(daten):
     pdf.output(dateiname); return dateiname
 
 def speichere_rechnung(d):
-    """Speichert Rechnung inkl. Status 'Offen' (Spalte 9)"""
     if not google_creds: return False
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        
-        # Header Check: Falls Status Spalte fehlt (alte Version), Header erweitern
         headers = ws.row_values(1)
-        if len(headers) < 9 or "Status" not in headers:
-            # Wir schreiben in Zelle I1 (9,1) den Header "Status"
-            ws.update_cell(1, 9, "Status")
+        if len(headers) < 9 or "Status" not in headers: ws.update_cell(1, 9, "Status")
 
         if not ws.get_all_values(): 
             ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr", "Status"])
             
-        # Hier wird explizit "Offen" am Ende angehängt
-        ws.append_row([
-            d.get('rechnungs_nr'), 
-            datetime.now().strftime("%d.%m.%Y"), 
-            d.get('kunde_name'), 
-            d.get('problem_titel'), 
-            str(d.get('summe_netto')).replace('.',','), 
-            str(d.get('mwst_betrag')).replace('.',','), 
-            str(d.get('summe_brutto')).replace('.',','), 
-            d.get('kundennummer', ''),
-            "Offen" # <--- NEU: STATUS
-        ])
+        ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',','), d.get('kundennummer', ''), "Offen"])
         return True
     except: return False
 
@@ -449,7 +396,7 @@ def berechne_summen(df_pos):
     return positions_liste, summe_netto, mwst, brutto
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.10.0")
+st.title("Auftrags- und Arbeitsberichte App 3.10.1")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -467,19 +414,17 @@ if modus == "Chef-Dashboard":
                 
                 st.markdown("---")
                 
-                # --- NEU: OFFENE POSTEN LISTE ---
+                # --- OFFENE POSTEN LISTE ---
                 st.subheader(f"⚠️ Offene Rechnungen ({len(offene_posten)})")
                 
                 if offene_posten:
                     for pos in offene_posten:
-                        # Container für jede Rechnung
                         with st.container(border=True):
                             c_info, c_btn = st.columns([3, 1])
                             with c_info:
                                 st.markdown(f"**{pos['kunde']}**")
                                 st.caption(f"Nr: {pos['nr']} | Betrag: {pos['betrag']}")
                             with c_btn:
-                                # Unique Key ist wichtig für Buttons in Loop
                                 if st.button("💰 Bezahlt", key=f"pay_{pos['nr']}_{pos['gspread_row']}"):
                                     success = markiere_als_bezahlt(pos['gspread_row'])
                                     if success:
@@ -556,7 +501,10 @@ elif modus == "Bericht & DATEV erstellen":
                         wa_text = f"Moin {neuer_kunde}, anbei der Arbeitsbericht {neue_nr}."
                         wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
                         st.link_button("💬 WhatsApp öffnen", wa_link)
-                    st.info("⚠️ Hinweis: WhatsApp kann keine Dateien automatisch anhängen. Bitte das heruntergeladene PDF manuell in den Chat ziehen!")
+                    
+                    # --- ÄNDERUNG: HIER DER IPHONE HINWEIS ---
+                    st.info("📱 iPhone-Tipp: PDF öffnen -> 'Teilen'-Knopf (Viereck mit Pfeil) -> WhatsApp wählen.")
+                    
                     with open(pdf, "rb") as f_csv: st.download_button("📊 DATEV (CSV) laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
 
             except Exception as e: st.error(f"Fehler beim Erstellen: {e}")
