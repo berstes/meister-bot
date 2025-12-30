@@ -342,7 +342,7 @@ def sende_mail(pfad, d):
 
 # --- 7. HAUPTPROGRAMM ---
 # HIER IST DER NEUE TITEL FÜR DIE APP:
-st.title("Auftrags- und Arbeitsberichte App")
+st.title("Auftrags- und Arbeitsberichte App 3.2.2")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -426,4 +426,5 @@ else:
                 st.json(auf)
                 if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
             except Exception as e: st.error(f"Fehler: {e}")
+
 
