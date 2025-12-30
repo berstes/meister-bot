@@ -30,8 +30,8 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-# HIER IST DER NEUE NAME FÜR DEN BROWSER-TAB:
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.2.2", page_icon="📝")
+# Version hochgezählt
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.3.0", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -208,12 +208,46 @@ def text_zu_auftrag(txt, kunden_db):
     return json.loads(res.choices[0].message.content)
 
 def hole_nr():
-    if not google_creds: return "2025001"
+    # --- ÄNDERUNG: Neues Nummerierungsformat B-YYYY-MM-01 ---
+    now = datetime.now()
+    jahr = now.strftime("%Y")
+    monat = now.strftime("%m")
+    prefix = f"B-{jahr}-{monat}"  # z.B. B-2026-01
+    
+    start_nr = f"{prefix}-01"
+
+    if not google_creds: 
+        return start_nr
+        
     try:
-        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        col = ws.col_values(1); last = col[-1] if col else "0"
-        return str(int(last)+1) if last.isdigit() else "2025001"
-    except: return "2025001"
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_name)
+        ws = sh.get_worksheet(0)
+        col = ws.col_values(1) # Spalte A (Nr)
+        
+        if not col or len(col) < 2:
+            return start_nr
+            
+        last_entry = col[-1] # Letzter Eintrag, z.B. "B-2026-01-05" oder altes Format "2025001"
+        
+        # Wir prüfen, ob der letzte Eintrag das neue Format hat und vom selben Monat ist
+        if last_entry.startswith(prefix):
+            try:
+                # Format splitten: B-2026-01-05 -> ["B", "2026", "01", "05"]
+                parts = last_entry.split('-')
+                if len(parts) == 4:
+                    nummer = int(parts[3])
+                    neue_nummer = nummer + 1
+                    # Formatierung: führende Null wenn < 10 (01, 02...)
+                    return f"{prefix}-{neue_nummer:02d}"
+            except:
+                pass # Falls Parsing fehlschlägt, Fallback nutzen
+        
+        # Falls neuer Monat oder altes Format -> Reset auf 01
+        return start_nr
+
+    except Exception as e:
+        return start_nr
 
 def baue_datev_datei(daten):
     umsatz = f"{daten.get('summe_brutto', 0):.2f}".replace('.', ',')
@@ -265,7 +299,8 @@ def erstelle_bericht_pdf(daten):
         
     pdf.set_font("Helvetica", '', 12); pdf.multi_cell(0, 6, txt(f"{daten.get('adresse')}"))
     
-    pdf.ln(10); pdf.set_font("Helvetica", 'B', 20)
+    # --- ÄNDERUNG: Schriftgröße von 20 auf 18 verkleinert ---
+    pdf.ln(10); pdf.set_font("Helvetica", 'B', 18)
     rechnungs_nr = daten.get('rechnungs_nr', 'ENTWURF') 
     pdf.cell(0, 10, txt(f"Arbeitsbericht Nr. {rechnungs_nr}"), ln=1)
     
@@ -341,8 +376,8 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-# HIER IST DER NEUE TITEL FÜR DIE APP:
-st.title("Auftrags- und Arbeitsberichte App 3.2.2")
+# Version Update
+st.title("Auftrags- und Arbeitsberichte App 3.3.0")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -426,5 +461,3 @@ else:
                 st.json(auf)
                 if speichere_auftrag(auf): st.toast("✅ Auftrag notiert"); st.info("In 'Offene Aufträge' gespeichert.")
             except Exception as e: st.error(f"Fehler: {e}")
-
-
