@@ -30,7 +30,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.4.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.5.0", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -232,48 +232,54 @@ def baue_datev_datei(daten):
     line = f"{umsatz};S;EUR;8400;{gegenkonto};{datum};{rechnungs_nr};{buchungstext}"
     return f"{header}\n{line}"
 
-# --- NEUE PDF KLASSE MIT FUSSZEILE WIE SCREENSHOT ---
 class PDF(FPDF):
     def header(self): pass
     
     def footer(self):
         # 1. Positionierung & Hintergrund
-        self.set_y(-35) # 35mm von unten
-        self.set_fill_color(248, 248, 248) # Helles Grau
-        self.rect(0, 297-35, 210, 35, 'F') # Rechteck über volle Breite
+        self.set_y(-35)
+        self.set_fill_color(248, 248, 248) 
+        self.rect(0, 297-35, 210, 35, 'F') 
         
         # 2. Farben & Hilfsfunktion
-        c_head = (20, 80, 160) # Blau für Überschriften
-        c_text = (50, 50, 50)  # Dunkelgrau für Text
+        c_head = (20, 80, 160) # Blau
+        c_text = (50, 50, 50)  # Dunkelgrau
         def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
         
-        y_start = self.get_y() + 3
+        y_top = 297 - 30 # Start-Höhe für Text
         
         # --- SPALTE 1: Firma ---
-        self.set_xy(10, y_start)
+        self.set_xy(10, y_top)
         self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
-        self.cell(45, 4, txt("Firma"), 0, 1, 'L')
+        self.cell(45, 4, txt("Firma"), 0, 2, 'L')
         self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
         self.multi_cell(45, 4, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
         
         # --- SPALTE 2: KONTAKT ---
-        self.set_xy(60, y_start)
+        self.set_xy(60, y_top) # HIER explizit neu setzen
         self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
-        self.cell(45, 4, txt("KONTAKT"), 0, 1, 'L')
+        self.cell(45, 4, txt("KONTAKT"), 0, 2, 'L')
+        
+        self.set_xy(60, self.get_y()) # WICHTIG: X wieder auf 60 zwingen vor multi_cell
         self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
         self.multi_cell(45, 4, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
         
         # --- SPALTE 3: BANKVERBINDUNG ---
-        self.set_xy(110, y_start)
+        self.set_xy(110, y_top)
         self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
-        self.cell(45, 4, txt("BANKVERBINDUNG"), 0, 1, 'L')
+        self.cell(45, 4, txt("BANKVERBINDUNG"), 0, 2, 'L')
+        
+        self.set_xy(110, self.get_y()) # WICHTIG: X wieder auf 110 zwingen
         self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
+        # IBAN Umbruch wie im Screenshot
         self.multi_cell(45, 4, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
         
         # --- SPALTE 4: STEUERNUMMER ---
-        self.set_xy(160, y_start)
+        self.set_xy(160, y_top)
         self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 9)
-        self.cell(45, 4, txt("STEUERNUMMER"), 0, 1, 'L')
+        self.cell(45, 4, txt("STEUERNUMMER"), 0, 2, 'L')
+        
+        self.set_xy(160, self.get_y()) # WICHTIG: X wieder auf 160 zwingen
         self.set_text_color(*c_text); self.set_font('Helvetica', '', 8)
         self.multi_cell(45, 4, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
 
@@ -288,7 +294,7 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font('Helvetica', 'B', 16); pdf.set_xy(10, 10); pdf.cell(0, 10, 'INTERWARK', 0, 0, 'L')
     pdf.set_font('Helvetica', '', 10)
     pdf.set_xy(10, 18); pdf.cell(0, 5, 'Bernhard Stegemann-Klammt', 0, 0, 'L')
-    pdf.set_xy(10, 23); pdf.cell(0, 5, 'Hohe Str. 28', 0, 0, 'L') # Adresse auf 28 angepasst
+    pdf.set_xy(10, 23); pdf.cell(0, 5, 'Hohe Str. 28', 0, 0, 'L') 
     pdf.set_xy(10, 28); pdf.cell(0, 5, '26725 Emden', 0, 0, 'L')
     pdf.set_xy(10, 33); pdf.cell(0, 5, 'info@interwark.de', 0, 0, 'L')
     pdf.set_draw_color(0, 0, 0); pdf.line(10, 42, 200, 42)
@@ -342,8 +348,6 @@ def erstelle_bericht_pdf(daten):
     hinweis = "Hinweis: Dieses Dokument dient als Leistungsnachweis und Buchungsvorlage.\nKeine Rechnung im Sinne des §14 UStG."
     pdf.multi_cell(0, 5, txt(hinweis))
     
-    # --- Bankinfo hier entfernt, da sie jetzt in der Fußzeile steht ---
-    
     ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
     pdf.output(dateiname); return dateiname
 
@@ -381,7 +385,7 @@ def sende_mail(pfad, d):
     except: return False
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.4.0")
+st.title("Auftrags- und Arbeitsberichte App 3.5.0")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
