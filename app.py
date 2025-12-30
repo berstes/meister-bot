@@ -31,7 +31,7 @@ except ImportError as e:
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.11.0", page_icon="📝")
+st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.11.1", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -89,7 +89,7 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_statistik_daten():
-    """Lädt Daten und sucht aggressiv nach der Status-Spalte"""
+    """Lädt Daten mit erweiterter Fehlerdiagnose"""
     if not google_creds: return 0.0, 0, 0, None, [], []
     try:
         gc = gspread.service_account_from_dict(google_creds)
@@ -97,17 +97,17 @@ def lade_statistik_daten():
         ws_rechnungen = sh.get_worksheet(0)
         alle_werte = ws_rechnungen.get_all_values()
         
-        if len(alle_werte) < 2: return 0.0, 0, 0, None, [], []
+        if len(alle_werte) < 2: return 0.0, 0, 0, None, [], ["Tabelle ist leer (< 2 Zeilen)"]
         
         raw_headers = alle_werte[0]
-        # Headers säubern und lowercase machen für Suche
+        # Headers für Suche vorbereiten
         raw_headers_lower = [str(h).strip().lower() for h in raw_headers]
         
-        # DataFrame erstellen
+        # DataFrame
         headers_clean = [str(h).strip() for h in raw_headers]
         df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
         
-        # Spalten Identifizieren (Indices finden)
+        # Spalten Indices suchen
         idx_status = -1
         idx_kunde = -1
         idx_nr = -1
@@ -117,25 +117,32 @@ def lade_statistik_daten():
         for i, h in enumerate(raw_headers_lower):
             if "status" in h: idx_status = i
             if "kunde" in h: idx_kunde = i
-            if "nr" in h and "kd" not in h: idx_nr = i # "Nr" aber nicht "KdNr"
+            if ("nr" in h or "nummer" in h) and "kd" not in h and "tel" not in h: idx_nr = i # Toleranter für "Nummer", schließt KdNr/Tel aus
             if "brutto" in h: idx_brutto = i
             if "datum" in h: idx_datum = i
 
-        col_datum_name = raw_headers[idx_datum] if idx_datum != -1 else None
-        col_brutto_name = raw_headers[idx_brutto] if idx_brutto != -1 else None
+        # Fallback: Wenn 'Nr' nicht gefunden, nimm Spalte 0 (meistens die ID)
+        if idx_nr == -1: idx_nr = 0
 
+        # Fehlende Spalten sammeln
         missing_cols = []
         if idx_status == -1: missing_cols.append("Status")
+        if idx_kunde == -1: missing_cols.append("Kunde")
+        if idx_brutto == -1: missing_cols.append("Brutto")
+        if idx_datum == -1: missing_cols.append("Datum")
         
-        # Statistik berechnen (nur wenn Datum und Brutto da sind)
+        # --- Statistik (Umsatz) ---
         chart_data = None
         umsatz_monat = 0.0
         anzahl_heute = 0
         anzahl_woche = 0
 
-        if col_datum_name and col_brutto_name:
+        if idx_datum != -1 and idx_brutto != -1:
+            col_datum_name = raw_headers[idx_datum]
+            col_brutto_name = raw_headers[idx_brutto]
+            
             df['Datum_Clean'] = pd.to_datetime(df[col_datum_name], format='%d.%m.%Y', errors='coerce')
-            df = df.dropna(subset=['Datum_Clean']) 
+            df_stat = df.dropna(subset=['Datum_Clean']) 
             
             def putze_geld(x):
                 if not isinstance(x, str): return 0.0
@@ -143,34 +150,35 @@ def lade_statistik_daten():
                 sauber = sauber.replace('.', '').replace(',', '.')
                 try: return float(sauber)
                 except: return 0.0
-            df['Brutto_Zahl'] = df[col_brutto_name].apply(putze_geld)
+            df_stat['Brutto_Zahl'] = df_stat[col_brutto_name].apply(putze_geld)
             
             heute = pd.Timestamp.now()
-            df_monat = df[(df['Datum_Clean'].dt.month == heute.month) & (df['Datum_Clean'].dt.year == heute.year)]
+            df_monat = df_stat[(df_stat['Datum_Clean'].dt.month == heute.month) & (df_stat['Datum_Clean'].dt.year == heute.year)]
             umsatz_monat = df_monat['Brutto_Zahl'].sum()
-            anzahl_heute = len(df[df['Datum_Clean'].dt.date == heute.date()])
+            anzahl_heute = len(df_stat[df_stat['Datum_Clean'].dt.date == heute.date()])
             aktuelle_kw = heute.isocalendar()[1]
-            df['KW'] = df['Datum_Clean'].dt.isocalendar().week
-            anzahl_woche = len(df[(df['KW'] == aktuelle_kw) & (df['Datum_Clean'].dt.year == heute.year)])
-            df['Monat_Jahr'] = df['Datum_Clean'].dt.strftime('%Y-%m')
-            df_sorted = df.sort_values('Datum_Clean')
+            df_stat['KW'] = df_stat['Datum_Clean'].dt.isocalendar().week
+            anzahl_woche = len(df_stat[(df_stat['KW'] == aktuelle_kw) & (df_stat['Datum_Clean'].dt.year == heute.year)])
+            df_stat['Monat_Jahr'] = df_stat['Datum_Clean'].dt.strftime('%Y-%m')
+            df_sorted = df_stat.sort_values('Datum_Clean')
             chart_data = df_sorted.groupby('Monat_Jahr')['Brutto_Zahl'].sum().tail(6)
         
-        # Offene Posten suchen
+        # --- Offene Posten ---
         offene_liste = []
-        if idx_status != -1 and idx_kunde != -1 and idx_nr != -1:
+        # Wir brauchen Status und Kunde zwingend
+        if idx_status != -1 and idx_kunde != -1:
             for i, row in enumerate(alle_werte):
-                if i == 0: continue # Header überspringen
+                if i == 0: continue # Header
                 
-                # Sicherstellen, dass die Zeile lang genug ist
+                # Sicherer Zugriff auf Spalten
                 status_wert = row[idx_status] if len(row) > idx_status else ""
+                kunde = row[idx_kunde] if len(row) > idx_kunde else "Unbekannt"
+                nr = row[idx_nr] if len(row) > idx_nr else "?"
+                betrag = row[idx_brutto] if (idx_brutto != -1 and len(row) > idx_brutto) else "0"
                 
-                # Wenn Status NICHT "bezahlt" enthält -> ist es offen (auch wenn leer)
+                # Logik: Wenn NICHT 'bezahlt' im Text -> ist offen.
+                # Auch leere Felder zählen als offen.
                 if "bezahlt" not in status_wert.lower():
-                    kunde = row[idx_kunde] if len(row) > idx_kunde else "?"
-                    nr = row[idx_nr] if len(row) > idx_nr else "?"
-                    betrag = row[idx_brutto] if len(row) > idx_brutto else "0"
-                    
                     offene_liste.append({
                         "gspread_row": i + 1, 
                         "nr": nr, 
@@ -182,21 +190,17 @@ def lade_statistik_daten():
         return umsatz_monat, anzahl_heute, anzahl_woche, chart_data, offene_liste, missing_cols
         
     except Exception as e: 
-        return 0.0, 0, 0, None, [], [str(e)]
+        return 0.0, 0, 0, None, [], [f"Fehler: {str(e)}"]
 
 def markiere_als_bezahlt(row_index):
     if not google_creds: return False
     try:
         gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
         headers = ws.row_values(1)
-        # Spalte suchen
         col_idx = -1
         for i, h in enumerate(headers):
             if "status" in str(h).lower(): col_idx = i + 1; break
-        
-        # Falls nicht gefunden, nehmen wir Spalte 9 (I)
         if col_idx == -1: col_idx = 9; ws.update_cell(1, 9, "Status")
-        
         ws.update_cell(row_index, col_idx, "Bezahlt")
         return True
     except Exception as e: st.error(f"Fehler beim Speichern: {e}"); return False
@@ -298,56 +302,30 @@ def baue_datev_datei(daten):
 class PDF(FPDF):
     def header(self): pass
     def footer(self):
-        # 1. Positionierung & Hintergrund
         self.set_y(-35)
         self.set_fill_color(248, 248, 248) 
         self.rect(0, 297-35, 210, 35, 'F') 
-        
-        # 2. Farben & Hilfsfunktion
         c_head = (20, 80, 160) # Blau
         c_text = (50, 50, 50)  # Dunkelgrau
         def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
-        
         y_top = 297 - 30 
         
-        # --- FUSSZEILE REPARIERT (Absolute Positionen erzwingen) ---
-        # WICHTIG: Nach jedem Header set_xy neu aufrufen für den Content!
-        
+        # --- FUSSZEILE REPARIERT (Absolute Positionierung) ---
         # SPALTE 1
-        self.set_xy(10, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("Firma"), 0, 0, 'L')
-        
-        self.set_xy(10, y_top + 5) # 5mm unter Header
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
+        self.set_xy(10, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("Firma"), 0, 0, 'L')
+        self.set_xy(10, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
         
         # SPALTE 2
-        self.set_xy(60, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("KONTAKT"), 0, 0, 'L')
-        
-        self.set_xy(60, y_top + 5)
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
+        self.set_xy(60, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("KONTAKT"), 0, 0, 'L')
+        self.set_xy(60, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
         
         # SPALTE 3
-        self.set_xy(110, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 0, 'L')
-        
-        self.set_xy(110, y_top + 5)
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
+        self.set_xy(110, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 0, 'L')
+        self.set_xy(110, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
         
         # SPALTE 4
-        self.set_xy(160, y_top)
-        self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5)
-        self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 0, 'L')
-        
-        self.set_xy(160, y_top + 5)
-        self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5)
-        self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
+        self.set_xy(160, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 0, 'L')
+        self.set_xy(160, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
 
 def erstelle_bericht_pdf(daten):
     pdf = PDF(); pdf.add_page()
@@ -461,7 +439,7 @@ def berechne_summen(df_pos):
     return positions_liste, summe_netto, mwst, brutto
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.11.0")
+st.title("Auftrags- und Arbeitsberichte App 3.11.1")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
@@ -469,8 +447,12 @@ if modus == "Chef-Dashboard":
         with st.spinner("Lade Zahlen..."):
             umsatz, anzahl_heute, anzahl_woche, chart_data, offene_posten, missing_cols = lade_statistik_daten()
             
+            # --- DIAGNOSE-ANZEIGE ---
             if missing_cols:
-                st.warning(f"⚠️ Warnung: Ich finde folgende Spalten nicht: **{', '.join(missing_cols)}**.\nBitte prüfe, ob in Zeile 1 im Google Sheet 'Status' steht.")
+                st.error("⚠️ FEHLER: Die App findet folgende Spalten im Google Sheet nicht:")
+                for col in missing_cols:
+                    st.write(f"- {col}")
+                st.info("Bitte prüfe die Schreibweise in Zeile 1 im Google Sheet.")
             
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"): st.error(umsatz)
             else:
@@ -500,7 +482,8 @@ if modus == "Chef-Dashboard":
                                         time.sleep(1)
                                         st.rerun()
                 else:
-                    st.info("Alles bezahlt! Gute Arbeit. 🎉")
+                    if not missing_cols:
+                        st.info("Alles bezahlt! Gute Arbeit. 🎉")
 
                 st.markdown("---")
                 st.subheader("📈 Umsatzverlauf")
@@ -570,7 +553,6 @@ elif modus == "Bericht & DATEV erstellen":
                         wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
                         st.link_button("💬 WhatsApp öffnen", wa_link)
                     
-                    # Hier war der Syntaxfehler, jetzt repariert:
                     st.info("📱 iPhone-Tipp: PDF öffnen -> 'Teilen'-Knopf (Viereck mit Pfeil) -> WhatsApp wählen.")
                     
                     with open(pdf, "rb") as f_csv: st.download_button("📊 DATEV (CSV) laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
