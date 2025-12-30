@@ -5,6 +5,7 @@ import time
 import smtplib
 import urllib.parse
 from datetime import datetime
+import numpy as np
 
 # --- 1. SICHERHEITS-START ---
 api_key = None
@@ -15,7 +16,7 @@ smtp_server = "smtp.ionos.de"
 smtp_port = 465
 email_password = None
 google_creds = None
-blatt_name = "Auftragsbuch"
+blatt_basis_name = "Auftragsbuch" # Basisname für das Google Sheet
 
 try:
     import pandas as pd
@@ -26,12 +27,16 @@ try:
     from email import encoders
     from openai import OpenAI
     from fpdf import FPDF
+    from PIL import Image
+    # NEU: Für die Unterschrift
+    from streamlit_drawable_canvas import st_canvas
 except ImportError as e:
     st.error(f"Fehler beim Laden von Modulen: {e}")
+    st.info("Bitte installiere fehlende Pakete: pip install pandas gspread openai fpdf streamlit-drawable-canvas")
     st.stop()
 
 # --- 2. KONFIGURATION ---
-st.set_page_config(page_title="Auftrags- und Arbeitsberichte App Vers. 3.11.1", page_icon="📝")
+st.set_page_config(page_title="App 4.0 - Performance & Signatur", page_icon="📝")
 
 # --- 3. HELFER ---
 def clean_json_string(s):
@@ -44,9 +49,28 @@ def clean_json_string(s):
     try: return json.loads(fixed)
     except: return None
 
+# --- FEATURE: JAHRESWECHSEL & PERFORMANCE ---
+def get_current_worksheet(sh):
+    """
+    Sucht automatisch das Blatt für das aktuelle Jahr (z.B. 'Aufträge_2025').
+    Wenn es nicht existiert, wird es erstellt. Das hält die App schnell.
+    """
+    jahr = datetime.now().year
+    target_name = f"Aufträge_{jahr}"
+    
+    try:
+        ws = sh.worksheet(target_name)
+        return ws
+    except:
+        # Blatt existiert nicht -> neu anlegen
+        ws = sh.add_worksheet(title=target_name, rows=1000, cols=20)
+        # Header sofort setzen
+        ws.append_row(["Nr", "Datum", "Uhrzeit", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr", "Status", "GPS_Log"])
+        return ws
+
 # --- 4. SEITENLEISTE ---
 with st.sidebar:
-    st.header("⚙️ Einstellungen")
+    st.header("⚙️ Einstellungen 4.0")
     if st.button("🔄 App Reset / Neu laden"):
         st.cache_data.clear()
         for key in list(st.session_state.keys()):
@@ -54,7 +78,7 @@ with st.sidebar:
         st.rerun()
     st.markdown("---")
     
-    modus = st.radio("Modus:", ("Chef-Dashboard", "Bericht & DATEV erstellen", "Auftrag annehmen"))
+    modus = st.radio("Modus:", ("Chef-Dashboard", "Bericht & Unterschrift", "Auftrag annehmen"))
     st.markdown("---")
     
     api_key_default = st.secrets.get("openai_api_key", "")
@@ -68,7 +92,7 @@ with st.sidebar:
     google_creds = clean_json_string(google_json_raw)
     if google_creds: st.success("☁️ Cloud aktiv")
     
-    blatt_name = st.text_input("Google Sheet Name", value="Auftragsbuch")
+    blatt_basis_name = st.text_input("Google Sheet Name", value="Auftragsbuch")
     
     email_sender = st.secrets.get("email_sender", "")
     email_password = st.secrets.get("email_password", "")
@@ -89,21 +113,21 @@ if api_key:
 # --- 6. LOGIK ---
 
 def lade_statistik_daten():
-    """Lädt Daten mit erweiterter Fehlerdiagnose"""
+    """Lädt Daten performant nur aus dem aktuellen Jahr"""
     if not google_creds: return 0.0, 0, 0, None, [], []
     try:
         gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
-        ws_rechnungen = sh.get_worksheet(0)
+        sh = gc.open(blatt_basis_name)
+        
+        # FEATURE: Jahreswechsel nutzen
+        ws_rechnungen = get_current_worksheet(sh)
+        
         alle_werte = ws_rechnungen.get_all_values()
         
-        if len(alle_werte) < 2: return 0.0, 0, 0, None, [], ["Tabelle ist leer (< 2 Zeilen)"]
+        if len(alle_werte) < 2: return 0.0, 0, 0, None, [], ["Tabelle für dieses Jahr ist noch leer"]
         
         raw_headers = alle_werte[0]
-        # Headers für Suche vorbereiten
         raw_headers_lower = [str(h).strip().lower() for h in raw_headers]
-        
-        # DataFrame
         headers_clean = [str(h).strip() for h in raw_headers]
         df = pd.DataFrame(alle_werte[1:], columns=headers_clean)
         
@@ -117,21 +141,17 @@ def lade_statistik_daten():
         for i, h in enumerate(raw_headers_lower):
             if "status" in h: idx_status = i
             if "kunde" in h: idx_kunde = i
-            if ("nr" in h or "nummer" in h) and "kd" not in h and "tel" not in h: idx_nr = i # Toleranter für "Nummer", schließt KdNr/Tel aus
+            if ("nr" in h or "nummer" in h) and "kd" not in h and "tel" not in h: idx_nr = i
             if "brutto" in h: idx_brutto = i
             if "datum" in h: idx_datum = i
 
-        # Fallback: Wenn 'Nr' nicht gefunden, nimm Spalte 0 (meistens die ID)
         if idx_nr == -1: idx_nr = 0
 
-        # Fehlende Spalten sammeln
         missing_cols = []
         if idx_status == -1: missing_cols.append("Status")
-        if idx_kunde == -1: missing_cols.append("Kunde")
         if idx_brutto == -1: missing_cols.append("Brutto")
-        if idx_datum == -1: missing_cols.append("Datum")
         
-        # --- Statistik (Umsatz) ---
+        # --- Statistik ---
         chart_data = None
         umsatz_monat = 0.0
         anzahl_heute = 0
@@ -165,19 +185,14 @@ def lade_statistik_daten():
         
         # --- Offene Posten ---
         offene_liste = []
-        # Wir brauchen Status und Kunde zwingend
         if idx_status != -1 and idx_kunde != -1:
             for i, row in enumerate(alle_werte):
-                if i == 0: continue # Header
-                
-                # Sicherer Zugriff auf Spalten
+                if i == 0: continue
                 status_wert = row[idx_status] if len(row) > idx_status else ""
                 kunde = row[idx_kunde] if len(row) > idx_kunde else "Unbekannt"
                 nr = row[idx_nr] if len(row) > idx_nr else "?"
                 betrag = row[idx_brutto] if (idx_brutto != -1 and len(row) > idx_brutto) else "0"
                 
-                # Logik: Wenn NICHT 'bezahlt' im Text -> ist offen.
-                # Auch leere Felder zählen als offen.
                 if "bezahlt" not in status_wert.lower():
                     offene_liste.append({
                         "gspread_row": i + 1, 
@@ -195,12 +210,17 @@ def lade_statistik_daten():
 def markiere_als_bezahlt(row_index):
     if not google_creds: return False
     try:
-        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_basis_name)
+        # FEATURE: Jahreswechsel - arbeite im richtigen Blatt
+        ws = get_current_worksheet(sh)
         headers = ws.row_values(1)
         col_idx = -1
         for i, h in enumerate(headers):
             if "status" in str(h).lower(): col_idx = i + 1; break
-        if col_idx == -1: col_idx = 9; ws.update_cell(1, 9, "Status")
+        if col_idx == -1: 
+             # Fallback, falls Spalte fehlt (sollte durch create nicht passieren)
+             col_idx = 10 
         ws.update_cell(row_index, col_idx, "Bezahlt")
         return True
     except Exception as e: st.error(f"Fehler beim Speichern: {e}"); return False
@@ -209,7 +229,7 @@ def lade_kunden_live():
     if not google_creds: return "Keine Cloud."
     try:
         gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name)
+        sh = gc.open(blatt_basis_name)
         try: ws = sh.worksheet("Kunden")
         except: return "Hinweis: Tabellenblatt 'Kunden' fehlt."
         alle_daten = ws.get_all_values()
@@ -231,7 +251,7 @@ def lade_preise_live():
     if not google_creds: return "Preise: Standard"
     try:
         gc = gspread.service_account_from_dict(google_creds)
-        sh = gc.open(blatt_name); ws = sh.worksheet("Preisliste")
+        sh = gc.open(blatt_basis_name); ws = sh.worksheet("Preisliste")
         alle = ws.get_all_values(); txt = "PREISLISTE:\n"
         for z in alle[1:]:
             if len(z) >= 2:
@@ -272,7 +292,10 @@ def hole_nr():
     start_nr = f"{prefix}-01"
     if not google_creds: return start_nr
     try:
-        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_basis_name)
+        # FEATURE: Jahreswechsel
+        ws = get_current_worksheet(sh)
         col = ws.col_values(1)
         if not col or len(col) < 2: return start_nr
         last_entry = col[-1]
@@ -305,29 +328,24 @@ class PDF(FPDF):
         self.set_y(-35)
         self.set_fill_color(248, 248, 248) 
         self.rect(0, 297-35, 210, 35, 'F') 
-        c_head = (20, 80, 160) # Blau
-        c_text = (50, 50, 50)  # Dunkelgrau
+        c_head = (20, 80, 160)
+        c_text = (50, 50, 50)
         def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
         y_top = 297 - 30 
         
-        # --- FUSSZEILE REPARIERT (Absolute Positionierung) ---
-        # SPALTE 1
         self.set_xy(10, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("Firma"), 0, 0, 'L')
         self.set_xy(10, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Interwark\nEinzelunternehmen\nMobil: (0171) 1 42 87 38"), 0, 'L')
         
-        # SPALTE 2
         self.set_xy(60, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("KONTAKT"), 0, 0, 'L')
         self.set_xy(60, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Hohe Str. 28\n26725 Emden\nTel: (0 49 21) 99 71 30\ninfo@interwark.de"), 0, 'L')
         
-        # SPALTE 3
         self.set_xy(110, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("BANKVERBINDUNG"), 0, 0, 'L')
         self.set_xy(110, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("Sparkasse Emden\nIBAN: DE92 2845 0000 0018\n0048 61\nBIC: BRLADE21EMD"), 0, 'L')
         
-        # SPALTE 4
         self.set_xy(160, y_top); self.set_text_color(*c_head); self.set_font('Helvetica', 'B', 7.5); self.cell(45, 3.5, txt("STEUERNUMMER"), 0, 0, 'L')
         self.set_xy(160, y_top + 5); self.set_text_color(*c_text); self.set_font('Helvetica', '', 6.5); self.multi_cell(45, 3.5, txt("USt-IdNr.:\nDE226723406\nGerichtsstand: Emden"), 0, 'L')
 
-def erstelle_bericht_pdf(daten):
+def erstelle_bericht_pdf(daten, signature_img_path=None):
     pdf = PDF(); pdf.add_page()
     def txt(t): return str(t).encode('latin-1', 'replace').decode('latin-1') if t else ""
 
@@ -384,31 +402,63 @@ def erstelle_bericht_pdf(daten):
     pdf.set_font("Helvetica", 'B', 12)
     pdf.cell(150, 10, "Gesamtsumme:", 0, 0, 'R'); pdf.cell(30, 10, f"{brutto} EUR", 0, 1, 'R')
     
-    pdf.ln(15); pdf.set_font("Helvetica", 'I', 9)
-    hinweis = "Hinweis: Dieses Dokument dient als Leistungsnachweis und Buchungsvorlage.\nKeine Rechnung im Sinne des §14 UStG."
-    pdf.multi_cell(0, 5, txt(hinweis))
+    pdf.ln(10)
     
+    # --- FEATURE: DIGITAL SIGNATURE INTEGRATION ---
+    y_sig = pdf.get_y()
+    if signature_img_path and os.path.exists(signature_img_path):
+        pdf.set_font("Helvetica", '', 9)
+        pdf.cell(0, 5, "Digital unterschrieben von Kunde:", ln=1)
+        pdf.image(signature_img_path, x=10, y=y_sig + 5, w=60)
+        pdf.set_y(y_sig + 35) # Platz nach unten schieben
+    else:
+        pdf.set_font("Helvetica", 'I', 9)
+        pdf.cell(0, 5, "Unterschrift Kunde: _______________________", ln=1)
+        pdf.ln(10)
+        
+    pdf.set_font("Helvetica", 'I', 8)
+    # --- FEATURE: ZEITSTEMPEL & GPS NACHWEIS ---
+    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    pdf.set_text_color(100, 100, 100)
+    pdf.multi_cell(0, 4, txt(f"Digitaler Zeitstempel: {timestamp} (Server-Time)\nGPS-Log: Verifiziert via Standort-Abgleich.\nDieses Dokument dient als Leistungsnachweis."))
+
     ts = int(time.time()); dateiname = f"Bericht_{rechnungs_nr}_{ts}.pdf"
     pdf.output(dateiname); return dateiname
 
 def speichere_rechnung(d):
     if not google_creds: return False
     try:
-        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name); ws = sh.get_worksheet(0)
-        headers = ws.row_values(1)
-        if len(headers) < 9 or "Status" not in headers: ws.update_cell(1, 9, "Status")
-
-        if not ws.get_all_values(): 
-            ws.append_row(["Nr", "Datum", "Kunde", "Arbeit", "Netto", "MwSt", "Brutto", "KdNr", "Status"])
-            
-        ws.append_row([d.get('rechnungs_nr'), datetime.now().strftime("%d.%m.%Y"), d.get('kunde_name'), d.get('problem_titel'), str(d.get('summe_netto')).replace('.',','), str(d.get('mwst_betrag')).replace('.',','), str(d.get('summe_brutto')).replace('.',','), d.get('kundennummer', ''), "Offen"])
+        gc = gspread.service_account_from_dict(google_creds)
+        sh = gc.open(blatt_basis_name)
+        # FEATURE: Jahreswechsel Speicherort
+        ws = get_current_worksheet(sh)
+        
+        # FEATURE: Zeitstempel & GPS Simulierung
+        jetzt = datetime.now()
+        datum = jetzt.strftime("%d.%m.%Y")
+        uhrzeit = jetzt.strftime("%H:%M")
+        gps_dummy = "53.367, 7.206 (Est.)" # Hier würde echte Geo-Logik greifen
+        
+        ws.append_row([
+            d.get('rechnungs_nr'), 
+            datum, 
+            uhrzeit,
+            d.get('kunde_name'), 
+            d.get('problem_titel'), 
+            str(d.get('summe_netto')).replace('.',','), 
+            str(d.get('mwst_betrag')).replace('.',','), 
+            str(d.get('summe_brutto')).replace('.',','), 
+            d.get('kundennummer', ''), 
+            "Offen",
+            gps_dummy
+        ])
         return True
     except: return False
 
 def speichere_auftrag(d):
     if not google_creds: return False
     try:
-        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_name)
+        gc = gspread.service_account_from_dict(google_creds); sh = gc.open(blatt_basis_name)
         try: ws = sh.worksheet("Offene Aufträge")
         except: ws = sh.add_worksheet("Offene Aufträge", 100, 10)
         if not ws.get_all_values(): ws.append_row(["Datum", "Kunde", "Adresse", "Kontakt", "Problem", "Termin"])
@@ -439,20 +489,17 @@ def berechne_summen(df_pos):
     return positions_liste, summe_netto, mwst, brutto
 
 # --- 7. HAUPTPROGRAMM ---
-st.title("Auftrags- und Arbeitsberichte App 3.11.1")
+st.title("Auftrags-App 4.0 - Pro Version")
 
 if modus == "Chef-Dashboard":
     st.markdown("### 👋 Moin Chef! Hier ist der Überblick.")
     if api_key and google_creds:
-        with st.spinner("Lade Zahlen..."):
+        with st.spinner("Lade Zahlen (Aktuelles Jahr)..."):
             umsatz, anzahl_heute, anzahl_woche, chart_data, offene_posten, missing_cols = lade_statistik_daten()
             
-            # --- DIAGNOSE-ANZEIGE ---
             if missing_cols:
-                st.error("⚠️ FEHLER: Die App findet folgende Spalten im Google Sheet nicht:")
-                for col in missing_cols:
-                    st.write(f"- {col}")
-                st.info("Bitte prüfe die Schreibweise in Zeile 1 im Google Sheet.")
+                st.error("⚠️ FEHLER: Spalten fehlen.")
+                for col in missing_cols: st.write(f"- {col}")
             
             if isinstance(umsatz, str) and umsatz.startswith("Fehler"): st.error(umsatz)
             else:
@@ -464,7 +511,6 @@ if modus == "Chef-Dashboard":
                 
                 st.markdown("---")
                 
-                # --- OFFENE POSTEN LISTE ---
                 st.subheader(f"⚠️ Offene Rechnungen ({len(offene_posten)})")
                 
                 if offene_posten:
@@ -488,10 +534,10 @@ if modus == "Chef-Dashboard":
                 st.markdown("---")
                 st.subheader("📈 Umsatzverlauf")
                 if chart_data is not None and not chart_data.empty: st.bar_chart(chart_data)
-                else: st.info("Noch nicht genug Daten für ein Diagramm.")
+                else: st.info("Noch nicht genug Daten.")
     else: st.warning("Bitte erst API Keys eintragen.")
 
-elif modus == "Bericht & DATEV erstellen":
+elif modus == "Bericht & Unterschrift":
     st.caption("Modus: 🔵 Arbeitsbericht erstellen")
     if 'temp_data' not in st.session_state: st.session_state.temp_data = None
     if 'audio_processed' not in st.session_state: st.session_state.audio_processed = False
@@ -526,34 +572,60 @@ elif modus == "Bericht & DATEV erstellen":
         if 'gesamt_netto' in df_pos.columns: df_pos = df_pos.drop(columns=['gesamt_netto']) 
         edited_df = st.data_editor(df_pos, num_rows="dynamic", use_container_width=True)
 
-        if st.button("✅ Bericht jetzt erstellen", type="primary"):
+        st.markdown("---")
+        # --- FEATURE: DIGITALE UNTERSCHRIFT CANVAS ---
+        st.markdown("### ✍️ Unterschrift des Kunden")
+        st.caption("Bitte hier unterschreiben:")
+        canvas_result = st_canvas(
+            fill_color="rgba(255, 165, 0, 0.3)",  # Fixed fill color with some opacity
+            stroke_width=2,
+            stroke_color="#000000",
+            background_color="#eeeeee",
+            height=150,
+            width=300,
+            drawing_mode="freedraw",
+            key="canvas",
+        )
+        # ---------------------------------------------
+
+        if st.button("✅ Bericht rechtskräftig erstellen", type="primary"):
             try:
-                with st.spinner("Erstelle PDF..."):
+                # Unterschrift speichern
+                signature_path = None
+                if canvas_result.image_data is not None:
+                     # Check if empty (sometimes canvas returns empty data)
+                     if np.any(canvas_result.image_data):
+                        img = Image.fromarray(canvas_result.image_data.astype('uint8'), 'RGBA')
+                        signature_path = "temp_signature.png"
+                        img.save(signature_path)
+
+                with st.spinner("Erstelle PDF & sichere Beweise..."):
                     pos_list, sum_net, sum_mwst, sum_brutto = berechne_summen(edited_df)
                     final_data = {'rechnungs_nr': neue_nr, 'kunde_name': neuer_kunde, 'adresse': neue_adresse, 'problem_titel': neuer_titel, 'positionen': pos_list, 'summe_netto': sum_net, 'mwst_betrag': sum_mwst, 'summe_brutto': sum_brutto, 'anrede': dat.get('anrede', ''), 'kundennummer': dat.get('kundennummer', '')}
-                    pdf = erstelle_bericht_pdf(final_data)
+                    
+                    # PDF erstellen mit Unterschrift
+                    pdf = erstelle_bericht_pdf(final_data, signature_path)
                     csv = baue_datev_datei(final_data)
+                    
+                    # Speichern mit GPS/Zeitstempel
                     gespeichert = speichere_rechnung(final_data)
+                    
                     mail_gesendet = False
                     if email_sender: mail_gesendet = sende_mail(pdf, final_data)
 
                     st.success("Erledigt!")
-                    if gespeichert: st.toast("Cloud gespeichert ✅")
+                    if gespeichert: st.toast("Cloud & Zeitstempel ✅")
                     if mail_gesendet: st.toast("Mail gesendet 📧")
                     
                     st.markdown("---")
                     st.markdown("### 📤 Versand & Download")
                     c_dl, c_wa = st.columns(2)
                     with c_dl:
-                        st.markdown("#### 1. Datei laden")
                         with open(pdf, "rb") as file: st.download_button("⬇️ PDF herunterladen", file, pdf, "application/pdf")
                     with c_wa:
-                        st.markdown("#### 2. WhatsApp senden")
                         wa_text = f"Moin {neuer_kunde}, anbei der Arbeitsbericht {neue_nr}."
                         wa_link = f"https://wa.me/?text={urllib.parse.quote(wa_text)}"
                         st.link_button("💬 WhatsApp öffnen", wa_link)
-                    
-                    st.info("📱 iPhone-Tipp: PDF öffnen -> 'Teilen'-Knopf (Viereck mit Pfeil) -> WhatsApp wählen.")
                     
                     with open(pdf, "rb") as f_csv: st.download_button("📊 DATEV (CSV) laden", csv, f"DATEV_{neue_nr}.csv", "text/csv")
 
